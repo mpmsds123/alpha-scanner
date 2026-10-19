@@ -37,11 +37,11 @@ This repository is a sanitized, platform-neutral reference implementation. It pr
 
 ## Search-Space Formulation
 
-For a dataset with \(n\) usable fields and \(m=56\) templates, the first-order search space is
+For a dataset with $n$ usable fields and $m=56$ templates, the first-order search space is
 
-\[
+$$
 n \times 56.
-\]
+$$
 
 One cell is one field-template formula requiring one backtest simulation.
 
@@ -66,45 +66,45 @@ The grid is heterogeneous: dataset hit rates differ, signal clusters by field, a
 
 A first-order result is a hit when
 
-\[
+$$
 |\mathrm{Sharpe}| \ge 1
 \qquad\text{and}\qquad
 1\% \le \mathrm{Turnover} \le 70\%.
-\]
+$$
 
-Let \(p\) denote the dataset's unknown hit probability. The dataset gate compares
+Let $p$ denote the dataset's unknown hit probability. The dataset gate compares
 
-\[
+$$
 H_0:p=0.5\%
 \qquad\text{vs.}\qquad
 H_1:p=2.0\%.
-\]
+$$
 
-Define \(\alpha=10\%\) as the maximum probability of falsely retaining a bad dataset, and \(\beta=5\%\) as the maximum probability of falsely abandoning a good dataset. The Wald boundaries are
+Define $\alpha=10\%$ as the maximum probability of falsely retaining a bad dataset, and $\beta=5\%$ as the maximum probability of falsely abandoning a good dataset. The Wald boundaries are
 
-\[
+$$
 A=\ln\left(\frac{1-\beta}{\alpha}\right)
 =\ln\left(\frac{0.95}{0.10}\right)
 \approx +2.25,
-\]
+$$
 
-\[
+$$
 B=\ln\left(\frac{\beta}{1-\alpha}\right)
 =\ln\left(\frac{0.05}{0.90}\right)
 \approx -2.89.
-\]
+$$
 
 The log-likelihood-ratio increments are
 
-\[
+$$
 \Delta L_{\mathrm{hit}}=\ln\left(\frac{0.02}{0.005}\right)=+1.386,
-\]
+$$
 
-\[
+$$
 \Delta L_{\mathrm{miss}}=\ln\left(\frac{0.98}{0.995}\right)=-0.0152.
-\]
+$$
 
-Therefore \(L\ge A\) retains the dataset and \(L\le B\) abandons it. Every screening round samples **80 different fields**, with one random template per field, to reduce within-round dependence. A zero-hit dataset stops after about **240 simulations**. If neither boundary is reached by 1,600 simulations, a non-negative score continues and a negative score abandons.
+Therefore $L\ge A$ retains the dataset and $L\le B$ abandons it. Every screening round samples **80 different fields**, with one random template per field, to reduce within-round dependence. A zero-hit dataset stops after about **240 simulations**. If neither boundary is reached by 1,600 simulations, a non-negative score continues and a negative score abandons.
 
 ### Operating-characteristic check
 
@@ -129,7 +129,7 @@ After dataset screening, allocation adapts at the field level. The scanner **doe
 | Field already produced a hit | **18.1%** |
 | Field still unproven | **1.3%–3.1%** |
 
-Same-field variants across adjacent windows had Sharpe correlations of **0.70–0.87**. By contrast, the first test's \(|\mathrm{Sharpe}|\) had only about **0.2** cross-template predictive correlation. The useful state variable is therefore whether the field has produced a hit, not the exact magnitude of its first result.
+Same-field variants across adjacent windows had Sharpe correlations of **0.70–0.87**. By contrast, the first test's $|\mathrm{Sharpe}|$ had only about **0.2** cross-template predictive correlation. The useful state variable is therefore whether the field has produced a hit, not the exact magnitude of its first result.
 
 The policy is simple:
 
@@ -145,7 +145,7 @@ The policy is simple:
 | Second order | **1,000** | selected parent × group wrapper |
 | Third order | **1,000** | selected parent × conditional `trade_when` variant |
 
-First-order promotion requires \(|\mathrm{Sharpe}|\ge1.2\), \(|\mathrm{Fitness}|\ge0.7\), and more than 100 positions. Candidates are decay-adjusted, negative signals are flipped before comparison, and the top 100 are retained with at most five per field. Higher-order wrapper names remain abstract in the public implementation.
+First-order promotion requires $|\mathrm{Sharpe}|\ge1.2$, $|\mathrm{Fitness}|\ge0.7$, and more than 100 positions. Candidates are decay-adjusted, negative signals are flipped before comparison, and the top 100 are retained with at most five per field. Higher-order wrapper names remain abstract in the public implementation.
 
 ## Results & Evidence
 
@@ -158,16 +158,16 @@ The evidence below supports the allocation method; it is not a claim about the p
 
 For a 10-year horizon, the noise-scale approximation is
 
-\[
+$$
 \sigma_{\mathrm{Sharpe}}\approx\frac{1}{\sqrt{10}}\approx0.316.
-\]
+$$
 
 Near-noise datasets showed empirical Sharpe dispersion of **0.28–0.33**, consistent with that scale. An exploratory false-discovery diagnostic is
 
-\[
+$$
 \widehat{\mathrm{FDR}}
 =\frac{N_{\mathrm{simulations}}\times0.16\%}{N_{\mathrm{observed\ hits}}}.
-\]
+$$
 
 This ratio is a scale diagnostic, not a formal multiple-testing correction.
 
@@ -232,12 +232,12 @@ python -m pytest
 
 - Within-field sampling reduces dependence during screening but does not eliminate it.
 - The binary hit abstraction discards continuous information contained in Sharpe, turnover, and other diagnostics.
-- The noise model is horizon-dependent; \(1/\sqrt{10}\) is not valid for every history length or return process.
-- Top-parent and best-of-\(k\) selection create winner inflation. For scale, the expected maximum among 10,000 independent noise Sharpes is approximately
+- The noise model is horizon-dependent; $1/\sqrt{10}$ is not valid for every history length or return process.
+- Top-parent and best-of-$k$ selection create winner inflation. For scale, the expected maximum among 10,000 independent noise Sharpes is approximately
 
-\[
+$$
 0.316\sqrt{2\ln(10{,}000)}\approx1.36.
-\]
+$$
 
   This bias is recognized but not fully corrected here.
 - Platform historical partitions and sub-universe checks are not true future out-of-sample evidence.
