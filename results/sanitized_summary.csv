@@ -1,0 +1,5 @@
+dataset_category,history,first_order_simulations,hits,hit_rate,fields_with_hit,fields_touched,expected_noise_hits,estimated_fdr,outcome
+analyst,about_2_years,3050,173,0.0567,20,1950,not_valid,not_valid,abandoned_by_minimum_history_gate
+options_model,10_years,2000,347,0.1735,37,380,3.1,about_0.01,mined_and_paused_after_4000_total_simulations
+news,at_least_500_days,1840,73,0.0397,11,228,2.9,about_0.04,in_progress
+

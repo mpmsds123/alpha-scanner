@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Private research artifacts must never enter the public repository.
+credentials*
+secrets/
+runs/
+raw_results/
+*.log
+

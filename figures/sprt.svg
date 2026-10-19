@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="850" height="430" viewBox="0 0 850 430" role="img" aria-labelledby="title desc">
+  <title id="title">SPRT decision boundaries</title>
+  <desc id="desc">A schematic log likelihood path between an upper mine boundary at 2.25 and lower abandon boundary at minus 2.89.</desc>
+  <rect width="850" height="430" fill="#ffffff"/>
+  <style>.axis{stroke:#334e68;stroke-width:2}.grid{stroke:#d9e2ec;stroke-width:1}.bound{stroke-width:3;stroke-dasharray:9 7}.label{font:14px system-ui,sans-serif;fill:#334e68}.head{font:700 22px system-ui,sans-serif;fill:#102a43}.path{fill:none;stroke:#2563eb;stroke-width:4}</style>
+  <text class="head" x="425" y="35" text-anchor="middle">Sequential dataset gate (schematic)</text>
+  <line class="axis" x1="85" y1="365" x2="790" y2="365"/><line class="axis" x1="85" y1="65" x2="85" y2="365"/>
+  <line class="grid" x1="85" y1="205" x2="790" y2="205"/><line class="bound" x1="85" y1="95" x2="790" y2="95" stroke="#16803c"/><line class="bound" x1="85" y1="325" x2="790" y2="325" stroke="#c2413b"/>
+  <text class="label" x="95" y="86">Mine: +2.25</text><text class="label" x="95" y="348">Abandon: -2.89</text><text class="label" x="740" y="397">trials</text><text class="label" transform="translate(27 245) rotate(-90)">log likelihood ratio</text>
+  <path class="path" fill="none" stroke="#2563eb" stroke-width="4" d="M90 205L180 218L270 229L350 177L440 190L520 199L600 151L690 119L735 88"/>
+  <circle cx="735" cy="88" r="7" fill="#16803c"/><text class="label" x="748" y="79">stop</text>
+</svg>
+
