@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="520" viewBox="0 0 1100 520" role="img" aria-labelledby="title desc">
+  <title id="title">Adaptive field-template search grid</title>
+  <desc id="desc">Gray untested cells, blue broad probes across fields, and orange remaining templates prioritized after a field produces a hit.</desc>
+  <rect width="1100" height="520" rx="24" fill="#f8fafc"/>
+  <style>
+    .h{font:700 26px system-ui,sans-serif;fill:#0f172a}.s{font:15px system-ui,sans-serif;fill:#475569}
+    .lab{font:600 14px system-ui,sans-serif;fill:#334155}.u{fill:#e2e8f0}.p{fill:#3b82f6}.a{fill:#f59e0b}
+  </style>
+  <text class="h" x="550" y="44" text-anchor="middle">Field × Template Search Grid</text>
+  <text class="s" x="550" y="72" text-anchor="middle">Evidence changes evaluation order, not the candidate space</text>
+  <text class="lab" x="580" y="105" text-anchor="middle">56 first-order templates →</text>
+  <text class="lab" transform="translate(42 300) rotate(-90)" text-anchor="middle">usable fields →</text>
+  <g transform="translate(95 125)">
+    <g fill="#e2e8f0">
+      <path d="M0 0h900v300H0z"/>
+    </g>
+    <g stroke="#f8fafc" stroke-width="3">
+      <path d="M0 0v300M75 0v300M150 0v300M225 0v300M300 0v300M375 0v300M450 0v300M525 0v300M600 0v300M675 0v300M750 0v300M825 0v300M900 0v300"/>
+      <path d="M0 0h900M0 50h900M0 100h900M0 150h900M0 200h900M0 250h900M0 300h900"/>
+    </g>
+    <g fill="#3b82f6">
+      <rect x="76" y="1" width="73" height="48"/><rect x="301" y="51" width="73" height="48"/>
+      <rect x="526" y="101" width="73" height="48"/><rect x="151" y="151" width="73" height="48"/>
+      <rect x="751" y="201" width="73" height="48"/><rect x="451" y="251" width="73" height="48"/>
+    </g>
+    <g fill="#f59e0b">
+      <rect x="1" y="101" width="73" height="48"/><rect x="76" y="101" width="73" height="48"/>
+      <rect x="151" y="101" width="73" height="48"/><rect x="226" y="101" width="73" height="48"/>
+      <rect x="301" y="101" width="73" height="48"/><rect x="376" y="101" width="73" height="48"/>
+      <rect x="601" y="101" width="73" height="48"/><rect x="676" y="101" width="73" height="48"/>
+      <rect x="826" y="101" width="73" height="48"/>
+    </g>
+  </g>
+  <g transform="translate(255 465)">
+    <rect class="u" width="24" height="24" rx="4"/><text class="s" x="34" y="18">untested</text>
+    <rect class="p" x="180" width="24" height="24" rx="4"/><text class="s" x="214" y="18">broad random probe</text>
+    <rect class="a" x="430" width="24" height="24" rx="4"/><text class="s" x="464" y="18">hit-field priority</text>
+  </g>
+</svg>

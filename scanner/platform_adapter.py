@@ -48,3 +48,27 @@ class PublicStubAdapter:
     def minimum_history_passes(self, top_results: Sequence[SimulationResult]) -> bool:
         raise AdapterNotConfigured("history checks belong in a private adapter")
 
+
+class RetryingAdapter:
+    """Retry transient adapter failures without embedding platform details."""
+
+    def __init__(self, adapter: PlatformAdapter, max_attempts: int = 3) -> None:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
+        self.adapter = adapter
+        self.max_attempts = max_attempts
+
+    def _call(self, method_name: str, *args):
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                return getattr(self.adapter, method_name)(*args)
+            except Exception:
+                if attempt == self.max_attempts:
+                    raise
+
+    def simulate(self, candidates: Sequence[FormulaSpec]) -> list[SimulationResult]:
+        return self._call("simulate", candidates)
+
+    def minimum_history_passes(self, top_results: Sequence[SimulationResult]) -> bool:
+        return self._call("minimum_history_passes", top_results)
+

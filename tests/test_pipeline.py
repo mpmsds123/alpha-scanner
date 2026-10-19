@@ -1,6 +1,6 @@
 from scanner.formula_factory import first_order_specs
 from scanner.pipeline import AdaptiveScanner, DatasetState, ScannerConfig
-from scanner.platform_adapter import SimulationResult
+from scanner.platform_adapter import RetryingAdapter, SimulationResult
 
 
 class FakeAdapter:
@@ -75,4 +75,22 @@ def test_visit_respects_first_order_cap_and_can_resume() -> None:
     )
     assert second.simulations <= 80
     assert second.first_order_hits == 3
+
+
+def test_retrying_adapter_recovers_from_transient_failure() -> None:
+    class FlakyAdapter(FakeAdapter):
+        def __init__(self):
+            super().__init__(set())
+            self.calls = 0
+
+        def simulate(self, candidates):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("transient")
+            return super().simulate(candidates)
+
+    flaky = FlakyAdapter()
+    results = RetryingAdapter(flaky, max_attempts=2).simulate(make_specs(2, 1))
+    assert len(results) == 2
+    assert flaky.calls == 2
 

@@ -1,109 +1,246 @@
 # Adaptive Alpha Scanner
 
-### Statistical experiment design for factor discovery under a fixed simulation budget
+### Statistical Experimental Design for Large-Scale Alpha Discovery
 
-Factor mining is often described as a formula-generation problem. I treated it as a **sequential allocation problem** instead: when the search space is effectively unbounded and simulations are scarce, what should be tested next, when should a dataset be abandoned, and how much confidence should each decision carry?
+Large-scale alpha discovery creates a structured search problem: each dataset contains many usable fields, and each field can be evaluated through a fixed library of first-order templates. The search space grows rapidly while simulation capacity remains fixed.
 
-This repository is a sanitized, platform-neutral implementation of that design. It preserves the statistical decisions and orchestration while excluding private field names, production expressions, account data, credentials, platform endpoints, and raw logs.
+I designed the scanner as a **budget-constrained sequential statistical experiment**, not a brute-force formula enumerator. Statistical evidence determines whether a dataset deserves more budget; adaptive sampling determines where the next simulations should be concentrated.
 
-![Pipeline from dataset gate to adaptive sampling, higher-order construction, and candidate checks](figures/pipeline.svg)
+| Research design | Value |
+|---|---:|
+| First-order templates per field | **56** |
+| Screening batch | **80 simulations** |
+| Daily simulation budget | **4,000** |
+| Dataset screening | **Wald SPRT** |
 
-## The problem
+## Table of Contents
 
-A dataset with `n` fields and `m` templates creates an `n × m` experiment grid. At 200 fields and 56 templates, that is 11,200 simulations; the largest dataset observed would require 372,400. The operating constraint was 4,000 simulations per day and 80 concurrent jobs.
+1. [Overview](#overview)
+2. [Search-Space Formulation](#search-space-formulation)
+3. [Statistical Design](#statistical-design)
+4. [Adaptive Sampling](#adaptive-sampling)
+5. [Results & Evidence](#results--evidence)
+6. [Representative Case](#representative-case)
+7. [System Design](#system-design)
+8. [Repository Structure](#repository-structure)
+9. [Limitations / Disclosure Boundary](#limitations--disclosure-boundary)
 
-Three empirical facts made uniform search wasteful:
+## Overview
 
-- dataset hit rates varied from 0% to 10%;
-- hits clustered much more strongly by field than by operator;
-- cells built from the same field were correlated, so simulation outcomes could not all be treated as independent.
+The central question is not how to generate more formulas. It is:
 
-The objective was therefore not “run more formulas.” It was: **maximize credible hits per 1,000 simulations, with an explicit error rate at each allocation decision.**
+> **How should a fixed simulation budget be allocated across a large, heterogeneous, correlated search space?**
 
-## Statistical design
+The objective is to maximize credible discoveries per 1,000 simulations while attaching explicit statistical error rates to allocation decisions. Dataset screening removes clearly low-yield regions early. Within retained datasets, field-level evidence changes evaluation order without deleting unexplored candidates. Higher-order search is bounded by stage-specific budgets.
 
-### 1. Gate datasets with a Wald SPRT
+This repository is a sanitized, platform-neutral reference implementation. It preserves the statistical decisions and orchestration while excluding private research content and authenticated execution.
 
-The dataset gate compares `H0: p = 0.5%` with `H1: p = 2%`, bracketing the 1% worth-mining line. The tolerated error rates are 5% for abandoning a good dataset and 10% for retaining a bad one.
+## Search-Space Formulation
 
-Each round samples 80 different fields with one randomly chosen template per field, keeping outcomes close to the independence assumption. A hit adds `log(0.02 / 0.005) = 1.386`; a miss adds `log(0.98 / 0.995) = -0.0152`. The decision boundaries are `+2.25` (mine) and `-2.89` (abandon). A 1,600-simulation cap resolves datasets close to the boundary.
+For a dataset with \(n\) usable fields and \(m=56\) templates, the first-order search space is
 
-Simulation validation used 3,000 replications at each true hit rate. The resulting keep rates were 4% at a 0.5% true hit rate, 42% at 1%, and 97% at 2%. A zero-hit dataset is abandoned after 240 simulations.
+\[
+n \times 56.
+\]
 
-### 2. Allocate within a dataset by field
+One cell is one field-template formula requiring one backtest simulation.
 
-Once a dataset passes, sampling remains random except for one priority rule: **after a field produces a hit, its remaining templates move to the front of the queue.** Nothing is pruned; only ordering changes.
+| Dataset scale | First-order candidate space |
+|---|---:|
+| 200 fields × 56 templates | **11,200 simulations** |
+| 6,650 fields × 56 templates | **372,400 simulations** |
 
-This choice followed the observed hierarchy of variation. Across earlier datasets, unproven fields produced hits at 1.3-3.1%, while cells from a field that had already hit produced hits at 18.1%. By contrast, a replayed operator-pruning rule saved no simulations and lost no hits: each operator had too few cells to reach the sequential rejection boundary. It was rejected rather than kept for architectural symmetry.
+At 4,000 simulations per day, the largest observed dataset would require about **93 days** of budget before any higher-order search.
 
-### 3. Bound higher-order search
+![Field-template grid showing broad exploration and hit-field prioritization](figures/search_grid.svg)
 
-First-order parents must meet documented Sharpe, Fitness, and position-count thresholds, are ranked by absolute Sharpe, and are capped per field. Second- and third-order variants are generated through abstract wrapper families. Each visit allocates at most 2,000 first-order, 1,000 second-order, and 1,000 third-order simulations.
+- **Gray:** untested cells
+- **Blue:** broad random probes across different fields
+- **Orange:** remaining templates moved forward after that field produces a hit
 
-Selection bias is explicit: selecting top parents admits lucky maxima, and choosing the best of many wrappers inflates winners. The system names these biases; it does not claim to have corrected them.
+The grid is heterogeneous: dataset hit rates differ, signal clusters by field, and related cells are dependent. This motivates two separate decisions: whether a dataset merits more budget, and where the next simulation should be spent inside it.
 
-### 4. Estimate luck, then distinguish strength from novelty
+## Statistical Design
 
-Under a 10-year i.i.d. noise approximation, a noise formula crosses `|Sharpe| ≥ 1` about 0.16% of the time. The exploratory false-discovery estimate is therefore:
+### Binary screening outcome
+
+A first-order result is a hit when
+
+\[
+|\mathrm{Sharpe}| \ge 1
+\qquad\text{and}\qquad
+1\% \le \mathrm{Turnover} \le 70\%.
+\]
+
+Let \(p\) denote the dataset's unknown hit probability. The dataset gate compares
+
+\[
+H_0:p=0.5\%
+\qquad\text{vs.}\qquad
+H_1:p=2.0\%.
+\]
+
+Define \(\alpha=10\%\) as the maximum probability of falsely retaining a bad dataset, and \(\beta=5\%\) as the maximum probability of falsely abandoning a good dataset. The Wald boundaries are
+
+\[
+A=\ln\left(\frac{1-\beta}{\alpha}\right)
+=\ln\left(\frac{0.95}{0.10}\right)
+\approx +2.25,
+\]
+
+\[
+B=\ln\left(\frac{\beta}{1-\alpha}\right)
+=\ln\left(\frac{0.05}{0.90}\right)
+\approx -2.89.
+\]
+
+The log-likelihood-ratio increments are
+
+\[
+\Delta L_{\mathrm{hit}}=\ln\left(\frac{0.02}{0.005}\right)=+1.386,
+\]
+
+\[
+\Delta L_{\mathrm{miss}}=\ln\left(\frac{0.98}{0.995}\right)=-0.0152.
+\]
+
+Therefore \(L\ge A\) retains the dataset and \(L\le B\) abandons it. Every screening round samples **80 different fields**, with one random template per field, to reduce within-round dependence. A zero-hit dataset stops after about **240 simulations**. If neither boundary is reached by 1,600 simulations, a non-negative score continues and a negative score abandons.
+
+### Operating-characteristic check
+
+Repeated Bernoulli simulation of the decision rule produced:
+
+| True hit rate | Retained | Mean simulations |
+|---:|---:|---:|
+| 0.16% | 0% | 277 |
+| 0.5% | 4% | 393 |
+| 1.0% | 42% | 554 |
+| 2.0% | 97% | 283 |
+| 5.0% | 100% | 102 |
+
+Clearly weak and clearly rich datasets resolve quickly; datasets near the practical boundary require more evidence.
+
+## Adaptive Sampling
+
+After dataset screening, allocation adapts at the field level. The scanner **does not prune** unexplored candidates; it only reorders them.
+
+| Evidence state | Subsequent observed hit rate |
+|---|---:|
+| Field already produced a hit | **18.1%** |
+| Field still unproven | **1.3%–3.1%** |
+
+Same-field variants across adjacent windows had Sharpe correlations of **0.70–0.87**. By contrast, the first test's \(|\mathrm{Sharpe}|\) had only about **0.2** cross-template predictive correlation. The useful state variable is therefore whether the field has produced a hit, not the exact magnitude of its first result.
+
+The policy is simple:
+
+1. probe broadly across unproven fields;
+2. after a field hits, move its remaining cells forward;
+3. continue sampling the rest of the grid rather than deleting it.
+
+### Multi-stage search
+
+| Stage | Per-visit cap | Construction |
+|---|---:|---|
+| First order | **2,000** | field × first-order template |
+| Second order | **1,000** | selected parent × group wrapper |
+| Third order | **1,000** | selected parent × conditional `trade_when` variant |
+
+First-order promotion requires \(|\mathrm{Sharpe}|\ge1.2\), \(|\mathrm{Fitness}|\ge0.7\), and more than 100 positions. Candidates are decay-adjusted, negative signals are flipped before comparison, and the top 100 are retained with at most five per field. Higher-order wrapper names remain abstract in the public implementation.
+
+## Results & Evidence
+
+The evidence below supports the allocation method; it is not a claim about the performance of an individual alpha.
+
+- Across **20 historical datasets**, first-order hit rates ranged from **0% to 10%**.
+- All **9 datasets** with hit rates at or above **2%** were retained within at most **240 simulations**.
+- Datasets at or below **0.62%** were abandoned within **240–480 simulations**.
+- Remaining cells from a field that had hit yielded **18.1%**, versus **1.3%–3.1%** for unproven fields.
+
+For a 10-year horizon, the noise-scale approximation is
+
+\[
+\sigma_{\mathrm{Sharpe}}\approx\frac{1}{\sqrt{10}}\approx0.316.
+\]
+
+Near-noise datasets showed empirical Sharpe dispersion of **0.28–0.33**, consistent with that scale. An exploratory false-discovery diagnostic is
+
+\[
+\widehat{\mathrm{FDR}}
+=\frac{N_{\mathrm{simulations}}\times0.16\%}{N_{\mathrm{observed\ hits}}}.
+\]
+
+This ratio is a scale diagnostic, not a formal multiple-testing correction.
+
+## Representative Case
+
+### USA / Option-Chart Model — v6
+
+One recorded 4,000-simulation visit moved from broad exploration across **380 fields** to targeted higher-order refinement across **7 surviving field families**.
+
+| Stage | Candidate space | Executed simulations | Hits | Hit rate | Promotion-qualified |
+|---|---:|---:|---:|---:|---:|
+| First order | **24,584** | **2,000** | **347** | **17.35%** | **36** |
+| Second order | **2,178** | **1,000** | **759** | **75.9%** | **216** |
+| Third order | **1,320** | **1,000** | **825** | **82.5%** | — |
+
+The first-order stage touched 380 unique fields; its 36 promotion-qualified results represented 13 fields. The second- and third-order stages each covered 7 selected field families.
+
+**Candidate space is not executed budget.** The table reports both so a partially sampled stage is not mistaken for exhaustive evaluation.
+
+The later-stage hit rates are conditional results from deliberately selected populations. They must not be interpreted as a causal improvement from 17.35% to 75.9% or 82.5%. Their role is to show how the budget narrows after evidence-based selection.
+
+## System Design
+
+The public system separates statistical policy from platform execution:
+
+- `statistics.py` implements Wald SPRT decisions and the exploratory noise-FDR diagnostic.
+- `sampling.py` selects diverse screening batches and prioritizes remaining cells from hit fields.
+- `formula_factory.py` creates sanitized first-, second-, and third-order experiment specifications.
+- `pipeline.py` tracks stage budgets, skips completed experiments, and supports pause/resume from prior results.
+- `platform_adapter.py` defines the execution boundary, including explicit retry handling, without authentication or endpoints.
+- `tests/` verifies stopping boundaries, distinct-field batches, hit-field priority, budget caps, retry behavior, and resume behavior.
+
+Completed experiment keys and sanitized result records can be persisted by the caller and supplied to the next visit. Final platform checks and submission remain manual by design; this repository does not auto-submit research outputs.
+
+## Repository Structure
 
 ```text
-expected noise hits / observed hits
-= simulations × 0.16% / observed hits
+alpha-scanner/
+├── figures/
+│   └── search_grid.svg
+├── scanner/
+│   ├── statistics.py
+│   ├── sampling.py
+│   ├── formula_factory.py
+│   ├── pipeline.py
+│   └── platform_adapter.py
+├── tests/
+│   ├── test_statistics.py
+│   ├── test_sampling.py
+│   └── test_pipeline.py
+├── pyproject.toml
+└── README.md
 ```
 
-This is a diagnostic, not a formal multiple-testing correction. Platform history, sub-universe, concentration, and correlation checks remain separate. The live evidence showed why: correlation with existing production signals became a stronger constraint than noise-driven false discovery.
-
-## What the live evidence changed
-
-The table below contains only category-level names and aggregated results from the design document.
-
-| Dataset | First-order simulations | Hits | Fields hit / touched | Estimated noise FDR | Outcome |
-|---|---:|---:|---:|---:|---|
-| Analyst | 3,050 | 173 (5.7%) | 20 / 1,950 | Not valid under 10-year model | Rejected by minimum-history gate |
-| Options model | 2,000 | 347 (17.4%) | 37 / 380 | ~1% | Mined; paused after 4,000 simulations |
-| News | 1,840 | 73 (4.0%) | 11 / 228 | ~4% | In progress |
-
-The field-priority hypothesis held in all three datasets, with a 2-14× hit-rate lift after a field's first hit. The minimum-history assumption failed on the analyst dataset, so a history gate was added before more budget could be spent. In the options-model dataset, 30 of 34 platform checks failed production-correlation review; novelty, not statistical luck, was the binding constraint. One candidate passed all documented checks and was submitted, with Sharpe 1.89, Fitness 1.60, maximum self-correlation 0.47, and maximum production correlation 0.68.
-
-These are research observations from three datasets, not a claim of out-of-sample performance.
-
-## Repository map
-
-```text
-scanner/
-  statistics.py        Wald SPRT and exploratory noise-FDR estimate
-  sampling.py          field-first adaptive batch selection
-  formula_factory.py   non-reversible abstract experiment specifications
-  pipeline.py          budget, promotion, pause, and resume orchestration
-  platform_adapter.py  interface boundary; no auth or endpoints
-tests/
-  test_statistics.py
-  test_sampling.py
-  test_pipeline.py
-docs/
-  STATISTICAL_DESIGN.md
-  DESIGN_EVOLUTION.md
-results/
-  sanitized_summary.csv
-```
-
-## Run the tests
+Run the deterministic public test suite with:
 
 ```bash
 python -m pytest
 ```
 
-The tests use a deterministic fake adapter. This public repository cannot run production simulations: the private adapter that translates abstract specifications into platform-native expressions is intentionally absent.
+## Limitations / Disclosure Boundary
 
-## Limitations
+- Within-field sampling reduces dependence during screening but does not eliminate it.
+- The binary hit abstraction discards continuous information contained in Sharpe, turnover, and other diagnostics.
+- The noise model is horizon-dependent; \(1/\sqrt{10}\) is not valid for every history length or return process.
+- Top-parent and best-of-\(k\) selection create winner inflation. For scale, the expected maximum among 10,000 independent noise Sharpes is approximately
 
-- Only three live datasets were available in the design document; conclusions will move with more data.
-- The noise model assumes 10 years and i.i.d. daily returns. It must not be applied to shorter histories without adjustment.
-- Top-parent and best-wrapper selection bias is identified but not corrected.
-- Correlation is observed only after simulation, so budget can still be spent on non-novel signal families.
-- Platform history and sub-universe checks are in-sample partitions, not true out-of-sample evidence.
+\[
+0.316\sqrt{2\ln(10{,}000)}\approx1.36.
+\]
 
-## Disclosure boundary
+  This bias is recognized but not fully corrected here.
+- Platform historical partitions and sub-universe checks are not true future out-of-sample evidence.
+- The repository demonstrates research design and orchestration, not a live, predictive, or tradable system.
 
-Dataset categories such as analyst, options model, and news are retained because they are generic research categories. Real field names, alpha expressions, identifiers, credentials, account details, endpoints, region-specific internal group names, and raw run logs are excluded. Synthetic keys in the code are placeholders and cannot be mapped back to the private research environment.
-
+Real field names, alpha expressions, identifiers, credentials, account details, endpoints, raw logs, and private research notes are excluded. Public candidate keys and wrappers are synthetic and non-reversible. Authenticated simulation and final submission require a private adapter and explicit human action.
