@@ -233,7 +233,7 @@ python -m pytest
 - Within-field sampling reduces dependence during screening but does not eliminate it.
 - The binary hit abstraction discards continuous information contained in Sharpe, turnover, and other diagnostics.
 - The noise model is horizon-dependent; $1/\sqrt{10}$ is not valid for every history length or return process.
-- Top-parent and best-of-$k$ selection create winner inflation. For scale, the expected maximum among 10,000 independent noise Sharpes is approximately
+- Top-parent and best-of-k selection create winner inflation. For scale, the expected maximum among 10,000 independent noise Sharpes is approximately
 
 $$
 0.316\sqrt{2\ln(10{,}000)}\approx1.36.
