@@ -176,7 +176,7 @@ One 4,000-simulation visit moved from broad exploration across **380 fields** to
 
 ## Assumptions
 
-Every assumption the conclusions rest on. *Check* is how it can be tested from logged data; *Status* is what is known today. Nine further assumptions concern platform rules and submission mechanics and are tracked privately.
+Every assumption the conclusions rest on. *Check* is how it can be tested from logged data; *Status* is what is known today. Assumptions 20-28 concern the submission stage and the platform; they are stated without thresholds or dates.
 
 | # | Assumption | If wrong | Check | Status |
 |---|---|---|---|---|
@@ -199,6 +199,15 @@ Every assumption the conclusions rest on. *Check* is how it can be tested from l
 | 17 | Repeated in-sample selection does not overfit | candidates degrade out of sample | none beyond platform checks | known limitation |
 | 18 | The same expression always returns the same result | cached and repeated results disagree | re-run a sample | open |
 | 19 | The code implements this document | silent divergence | unit tests and old-versus-new parity on real logs | 13 tests here; the private implementation has 67 tests and matched the previous version on all 9 datasets checked; no live run of v7 yet |
+| 20 | Screening thresholds on Sharpe and fitness predict passing the platform's pre-submission checks | good candidates are dropped, or poor ones sent for checking | compare screen outcome with check outcome | open |
+| 21 | Alphas from the same field, stage and dataset share a check outcome, so one representative per family suffices | a checkable candidate is skipped | spot-check non-representatives | open |
+| 22 | A "pass" verdict is valid only while the set of submitted alphas is unchanged, because correlation checks are relative to that set | a stale pass is acted on | recheck after every submission | handled in code |
+| 23 | Correlation with already-submitted alphas, not Sharpe, is the binding constraint on submission | effort is aimed at the wrong target | tabulate rejection reasons | open |
+| 24 | A category cell is saturated once enough accepted plus pending alphas exist, so further search there can be skipped | skipped cells hold unsubmitted value | compare the rule with realised acceptance | open (heuristic) |
+| 25 | The program's end conditions and eligibility criteria are as understood | wasted search or a wrong stop | re-read the rules at each review | open |
+| 26 | The daily simulation quota and its day boundary are stable and counted as assumed | budget over- or under-spend | reconcile counts against platform notices | monitored |
+| 27 | Check results are available within the fixed wait time | a false "not ready" | log of retries | open |
+| 28 | Placeholder descriptions are accepted by the platform | submission is blocked | first live run | not verified |
 
 ## Limitations and Disclosure Boundary
 

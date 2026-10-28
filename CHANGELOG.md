@@ -6,7 +6,7 @@ Weekly updates, newest first. Each entry has the same four parts: what changed, 
 
 **What changed**
 - The private scanner was rewritten as a layered package (statistics, sampling, queueing, storage, platform access, runner, pipeline), with policy separated from execution. 67 tests; results identical to the previous version on all 9 real datasets compared. A rollback tag marks the previous version.
-- This public reference was aligned with v7: H1 hit rate 2% → 5%; a dataset with zero hits in its first 80 simulations is now abandoned immediately (previously after 240); the operating-characteristic table was recomputed exactly; README consolidated into one document with a full assumptions register. 13 tests.
+- This public reference was aligned with v7: H1 hit rate 2% → 5%; a dataset with zero hits in its first 80 simulations is now abandoned immediately (previously after 240); the operating-characteristic table was recomputed exactly; README consolidated into one document with the full 28-item assumptions register. 13 tests.
 
 **What the data show** (recomputed from run logs)
 - 419 datasets queued, 36 with first-order logs (about 9%). 48,423 simulation records: 94.6% completed, 4.5% errored, 0.9% failed. About 11% of first-order records come from random sampling; the rest are adaptive and are not used to estimate rates.
