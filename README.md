@@ -24,6 +24,7 @@ I designed the scanner as a **budget-constrained sequential statistical experime
 7. [System Design](#system-design)
 8. [Repository Structure](#repository-structure)
 9. [Limitations / Disclosure Boundary](#limitations--disclosure-boundary)
+10. [Documentation and Progress](#documentation-and-progress)
 
 ## Overview
 
@@ -77,7 +78,7 @@ Let $p$ denote the dataset's unknown hit probability. The dataset gate compares
 $$
 H_0:p=0.5\%
 \qquad\text{vs.}\qquad
-H_1:p=2.0\%.
+H_1:p=5.0\%.
 $$
 
 Define $\alpha=10\%$ as the maximum probability of falsely retaining a bad dataset, and $\beta=5\%$ as the maximum probability of falsely abandoning a good dataset. The Wald boundaries are
@@ -97,26 +98,31 @@ $$
 The log-likelihood-ratio increments are
 
 $$
-\Delta L_{\mathrm{hit}}=\ln\left(\frac{0.02}{0.005}\right)=+1.386,
+\Delta L_{\mathrm{hit}}=\ln\left(\frac{0.05}{0.005}\right)=+2.303,
 $$
 
 $$
-\Delta L_{\mathrm{miss}}=\ln\left(\frac{0.98}{0.995}\right)=-0.0152.
+\Delta L_{\mathrm{miss}}=\ln\left(\frac{0.95}{0.995}\right)=-0.0463.
 $$
 
-Therefore $L\ge A$ retains the dataset and $L\le B$ abandons it. Every screening round samples **80 different fields**, with one random template per field, to reduce within-round dependence. A zero-hit dataset stops after about **240 simulations**. If neither boundary is reached by 1,600 simulations, a non-negative score continues and a negative score abandons.
+Therefore $L\ge A$ retains the dataset and $L\le B$ abandons it. Every screening round samples **80 different fields**, with one random template per field, to reduce within-round dependence. A zero-hit dataset stops at the first look (**80 simulations**). The two hypotheses are equally likely to win at a hit rate of about **1.97%**, so that is the effective retain/abandon line. If neither boundary is reached by 1,600 simulations, a non-negative score continues and a negative score abandons. The cap is a pragmatic bound, not a derived quantity (see [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md)).
 
 ### Operating-characteristic check
 
-Repeated Bernoulli simulation of the decision rule produced:
+Exact dynamic-programming evaluation of the decision rule (looks every 80 simulations, cap 1,600, independent Bernoulli outcomes):
 
 | True hit rate | Retained | Mean simulations |
 |---:|---:|---:|
-| 0.16% | 0% | 277 |
-| 0.5% | 4% | 393 |
-| 1.0% | 42% | 554 |
-| 2.0% | 97% | 283 |
-| 5.0% | 100% | 102 |
+| 0.16% | 0.03% | 91 |
+| 0.5% | 0.9% | 119 |
+| 1.0% | 7.6% | 161 |
+| 1.5% | 25% | 193 |
+| 2.0% | 49% | 199 |
+| 3.0% | 83% | 161 |
+| 5.0% | 98.1% | 103 |
+| 10% | 99.98% | 81 |
+
+The realised error rates (0.9% false retention at the null, 1.9% false abandonment at the alternative) sit well below the nominal 10% and 5% because looks are discrete (every 80) and the boundaries are conservative. These figures assume independent trials; field-level dependence makes the effective sample smaller (see Limitations).
 
 Clearly weak and clearly rich datasets resolve quickly; datasets near the practical boundary require more evidence.
 
@@ -151,9 +157,9 @@ First-order promotion requires $|\mathrm{Sharpe}|\ge1.2$, $|\mathrm{Fitness}|\ge
 
 The evidence below supports the allocation method; it is not a claim about the performance of an individual alpha.
 
-- Across **20 historical datasets**, first-order hit rates ranged from **0% to 10%**.
-- All **9 datasets** with hit rates at or above **2%** were retained within at most **240 simulations**.
-- Datasets at or below **0.62%** were abandoned within **240–480 simulations**.
+- Across **35 datasets with at least 80 logged simulations**, the first random round of 80 gave **22** datasets with zero hits and **5** with four or more. A two-point mixture fitted to those counts puts about **25%** of datasets in a high-yield group (hit rate ≈ 6%) and the rest at or below about 0.5%; with only 35 datasets the weight is imprecise. Replaying the stopping rule over all 36 datasets with first-order logs gives 25 abandon, 10 retain, 1 still undecided.
+- This fit is the basis for the current H0/H1 values; it will be re-estimated as coverage grows (see [docs/PROGRESS.md](docs/PROGRESS.md)).
+- Field-level priority (below) comes from the earlier v6 analysis and has not yet been re-estimated under the current design.
 - Remaining cells from a field that had hit yielded **18.1%**, versus **1.3%–3.1%** for unproven fields.
 
 For a 10-year horizon, the noise-scale approximation is
@@ -230,7 +236,7 @@ python -m pytest
 
 ## Limitations / Disclosure Boundary
 
-- Within-field sampling reduces dependence during screening but does not eliminate it.
+- Within-field sampling reduces dependence during screening but does not eliminate it; the full list of 28 modelling assumptions and how each can be checked is in [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md).
 - The binary hit abstraction discards continuous information contained in Sharpe, turnover, and other diagnostics.
 - The noise model is horizon-dependent; $1/\sqrt{10}$ is not valid for every history length or return process.
 - Top-parent and best-of-k selection create winner inflation. For scale, the expected maximum among 10,000 independent noise Sharpes is approximately
@@ -244,3 +250,13 @@ $$
 - The repository demonstrates research design and orchestration, not a live, predictive, or tradable system.
 
 Real field names, alpha expressions, identifiers, credentials, account details, endpoints, raw logs, and private research notes are excluded. Public candidate keys and wrappers are synthetic and non-reversible. Authenticated simulation and final submission require a private adapter and explicit human action.
+
+## Documentation and Progress
+
+| Document | Content |
+|---|---|
+| [docs/STATISTICAL_DESIGN.md](docs/STATISTICAL_DESIGN.md) | Every parameter with its reason, in plain words |
+| [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) | All modelling assumptions, the risk of each, and how to check it from run data |
+| [docs/PROGRESS.md](docs/PROGRESS.md) | Weekly progress log and calibration results |
+
+The design is versioned. Parameter changes are made only at scheduled reviews and recorded in the progress log with the data that justified them.

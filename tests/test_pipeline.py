@@ -41,12 +41,12 @@ def test_rich_dataset_completes_small_grid() -> None:
     assert report.first_order_hits == 3
 
 
-def test_zero_hit_dataset_is_abandoned_at_240() -> None:
+def test_zero_hit_dataset_is_abandoned_at_first_look() -> None:
     specs = make_specs(300, 1)
     config = ScannerConfig(first_order_visit_cap=300)
     report = AdaptiveScanner(FakeAdapter(set()), config=config, seed=4).run_visit(specs)
     assert report.state == DatasetState.ABANDONED
-    assert report.simulations == 240
+    assert report.simulations == 80
     assert report.note == "SPRT gate"
 
 
@@ -60,7 +60,7 @@ def test_history_gate_precedes_more_spending() -> None:
 
 def test_visit_respects_first_order_cap_and_can_resume() -> None:
     specs = make_specs(120, 2)
-    hits = {spec.candidate_key for spec in specs[:3]}
+    hits = {spec.candidate_key for spec in specs[:24]}
     config = ScannerConfig(first_order_visit_cap=160, round_size=80)
     first = AdaptiveScanner(FakeAdapter(hits), config=config, seed=1).run_visit(specs)
     assert first.state == DatasetState.PAUSED
@@ -74,7 +74,7 @@ def test_visit_respects_first_order_cap_and_can_resume() -> None:
         history_checked=first.history_checked,
     )
     assert second.simulations <= 80
-    assert second.first_order_hits == 3
+    assert second.first_order_hits == 24
 
 
 def test_retrying_adapter_recovers_from_transient_failure() -> None:

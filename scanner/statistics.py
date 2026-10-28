@@ -24,13 +24,14 @@ class SPRTDecision(str, Enum):
 class SPRTConfig:
     """Two-point Bernoulli SPRT configuration.
 
-    ``p_bad`` and ``p_good`` bracket the 1% worth-mining line. ``miss_good``
+    ``p_bad`` and ``p_good`` bracket the ~2% indifference rate (the rate at which the test is
+    equally likely to retain or abandon). ``miss_good``
     is the tolerated probability of abandoning a good dataset and
     ``keep_bad`` the tolerated probability of retaining a bad one.
     """
 
     p_bad: float = 0.005
-    p_good: float = 0.02
+    p_good: float = 0.05
     miss_good: float = 0.05
     keep_bad: float = 0.10
     cap: int = 1_600
