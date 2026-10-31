@@ -2,253 +2,381 @@
 
 ### Sequential experimental design for allocating a fixed simulation budget in alpha discovery
 
-Each dataset contains many usable fields, and each field can be evaluated through a fixed library of formula templates. The search space is far larger than the daily simulation budget, so the scanner is built as a **budget-constrained sequential statistical experiment**: evidence decides which datasets deserve more budget, and adaptive sampling decides where the next simulations go inside them.
-
-| Design constant | Value |
-|---|---:|
-| First-order templates per field | 56 |
-| Screening round | 80 simulations (80 distinct fields) |
-| Daily simulation budget | 4,000 |
-| Dataset screening | Wald SPRT, H0: p = 0.5% vs H1: p = 5% |
-
-## Current Status
-
-**As of 2026-10-27 · design version v7 · history in [CHANGELOG.md](CHANGELOG.md)**
-
-- **Coverage:** 419 datasets queued; 36 have first-order logs (about 9%), concentrated in a few region/category groups. No conclusion extends to the unscreened 91%.
-- **Dataset quality (first random round of 80, n = 35 datasets):** 22 had zero hits and 5 had four or more. A two-point mixture fits to roughly 25% high-yield datasets (hit rate ≈ 6%) and the remainder at or below about 0.5%. With n = 35 the mixing weight is imprecise.
-- **Field-level clustering (verified on logs):** within 15 datasets, a field that had already produced a hit gave a later hit rate of 17.9%, versus 1.9% for fields without a prior hit.
-- **Not yet verified:** a live run of v7 on the platform; within-dataset dependence (too few random rounds); the 1,600 cap (no derivation); the noise hit rate outside a 10-year history.
+**Design version v7 · data through 2026-10-31 · weekly log in [CHANGELOG.md](CHANGELOG.md)**
 
 ## Contents
 
-1. [Search-space formulation](#search-space-formulation)
-2. [Statistical design](#statistical-design)
-3. [Adaptive sampling and staged search](#adaptive-sampling-and-staged-search)
-4. [Evidence](#evidence)
-5. [Representative case](#representative-case)
-6. [Assumptions](#assumptions)
-7. [Limitations and disclosure boundary](#limitations-and-disclosure-boundary)
-8. [System design](#system-design)
-9. [Repository structure](#repository-structure)
+1. [Problem](#1-problem)
+2. [Definitions and outcomes](#2-definitions-and-outcomes)
+3. [Design](#3-design)
+4. [Assumptions](#4-assumptions)
+5. [Evidence](#5-evidence)
+6. [Results to date](#6-results-to-date)
+7. [Limitations](#7-limitations)
+8. [Repository and reproduction](#8-repository-and-reproduction)
 
-## Search-Space Formulation
+---
 
-For a dataset with $n$ usable fields and $m=56$ templates, the first-order search space is
+## 1. Problem
 
-$$
-n \times 56.
-$$
+### 1.1 Given
 
-One cell is one field-template formula requiring one backtest simulation.
+- **Simulator.** A formula (a data field passed through operators) is evaluated over a 10-year daily history. One call returns three statistics: Sharpe, Fitness and Turnover. One call is one *simulation* and costs one unit of budget.
+- **Budget.** B = 4,000 simulations per day (the platform quota of 5,000 less 1,000 reserved for a separate pipeline).
+- **Inventory.** 355 datasets and 81,336 fields in four regions (USA, EUR, GLB, AMR), each with field coverage of at least 40%.
+- **Sampling frame.** 56 first-order templates per field. The first-order frame therefore holds 81,336 × 56 = **4,554,816 cells**, which is 1,139 days of budget before any higher-order search.
 
-| Dataset scale | First-order candidate space |
-|---|---:|
-| 200 fields × 56 templates | **11,200 simulations** |
-| 6,650 fields × 56 templates | **372,400 simulations** |
+### 1.2 Unknown
 
-At 4,000 simulations per day, the largest of the 58 cached field lists would require about **93 days** of budget before any higher-order search.
+- p<sub>d</sub>, the probability that a random cell of dataset *d* is a *hit* (defined in section 2). It differs by dataset.
+- Which cells lead to a signal that passes the platform's submission checks.
 
-![Field-template grid showing broad exploration and hit-field prioritization](figures/search_grid.svg)
+### 1.3 Objective
 
-- **Gray:** untested cells
-- **Blue:** broad random probes across different fields
-- **Orange:** remaining templates moved forward after that field produces a hit
+Maximise the expected number of **independent, submittable signals per 1,000 simulations**.
 
-The grid is heterogeneous: dataset hit rates differ, signal clusters by field, and related cells are dependent. This motivates two separate decisions: whether a dataset merits more budget, and where the next simulation should be spent inside it.
+### 1.4 Decisions
 
-## Statistical Design
+At every step the scanner chooses:
 
-### Outcome and noise reference
+- **D1.** Which dataset receives the next simulations.
+- **D2.** Which cells inside that dataset are simulated next.
 
-A first-order result is a **hit** when
+### 1.5 Constraints
 
-$$
-|\mathrm{Sharpe}| \ge 1
-\qquad\text{and}\qquad
-1\% \le \mathrm{Turnover} \le 70\%.
-$$
+- B = 4,000 simulations per day.
+- Platform limits: 10 simulations per request, 8 requests in flight.
+- A dataset needs at least 500 active days to be submittable.
+- A signal passes only if the platform's checks pass, chiefly a correlation limit against signals already submitted.
 
-The turnover range is the platform's submission range. For a signal-free strategy with a 10-year daily history, the Sharpe estimate is approximately $N(0, 1/\sqrt{10})$ with standard deviation $\approx 0.316$, so $P(|\mathrm{Sharpe}| \ge 1) \approx P(|Z| \ge 3.16) \approx 0.157\%$. The measured rate in earlier no-signal simulations is **0.15654%**, which is the noise reference $\pi_{\mathrm{noise}}$ used below. The approximation depends on history length: for 5 years the same calculation gives about 2.5%. The constant is therefore only valid where the history is 10 years (assumption 9).
+### 1.6 Why this is a statistics problem
 
-### Dataset gate: Wald sequential probability ratio test
+1. p<sub>d</sub> is unknown and, in the data, spans two orders of magnitude (section 5, E1).
+2. Cells of the same field are strongly dependent (section 5, E4), so simulations are not independent draws.
+3. All 10 years are in-sample, so a passing formula is the maximum of many noisy draws.
+4. Both errors are costly: stopping a good dataset loses it; keeping a poor one wastes budget.
 
-Let $p$ be a dataset's unknown hit probability. The gate tests
+### 1.7 Approach
 
-$$
-H_0:p=0.5\%
-\qquad\text{vs.}\qquad
-H_1:p=5.0\%.
-$$
+Treat D1 as a **sequential hypothesis test** per dataset, and D2 as an **adaptive sampling rule** that exploits clustering of hits within fields. Survivors are escalated through staged search and only then sent to platform checks. Nothing is submitted automatically.
 
-$H_0$ is about three times the noise rate; $H_1$ is a rounded, slightly conservative version of the high-yield group fitted from data (about 6%, see Status). Tolerances: $\alpha=10\%$ is the maximum probability of retaining a dataset at $H_0$; $\beta=5\%$ is the maximum probability of abandoning a dataset at $H_1$. The asymmetry reflects cost: wrongly retaining costs on the order of 100-200 simulations, wrongly abandoning loses the dataset. Wald boundaries:
+```mermaid
+flowchart LR
+  A["Dataset"] --> B["Screening round: 80 cells, 80 distinct fields"]
+  B --> C{"Sequential test (D1)"}
+  C -->|"evidence of low yield"| X["Stop dataset"]
+  C -->|"evidence of high yield"| D["Adaptive search inside dataset (D2)"]
+  C -->|"inconclusive"| B
+  D --> E["Stage 2, then stage 3"]
+  E --> F["Platform checks"]
+  F --> G["Human review"]
+```
 
-$$
-A=\ln\frac{1-\beta}{\alpha}=\ln\frac{0.95}{0.10}\approx +2.251,
-\qquad
-B=\ln\frac{\beta}{1-\alpha}=\ln\frac{0.05}{0.90}\approx -2.890.
-$$
+---
 
-Log-likelihood-ratio increments per simulation:
+## 2. Definitions and outcomes
 
-$$
-\Delta L_{\mathrm{hit}}=\ln\frac{0.05}{0.005}=+2.303,
-\qquad
-\Delta L_{\mathrm{miss}}=\ln\frac{0.95}{0.995}=-0.0463.
-$$
+| Term | Definition |
+|---|---|
+| Dataset | A package of fields on the platform, fixed to one region, universe and delay. |
+| Field | One column of a dataset. Vector fields enter in two forms (average and sum). |
+| Template | One of 56 fixed formulas on a field: the field itself plus 11 time-series operators × 5 windows (5, 22, 66, 120, 240 days). Every field is first cleaned by `winsorize(ts_backfill(x, 120), std=4)`. |
+| Cell | A (field, template) pair. One cell is one simulation. |
+| Hit | \|Sharpe\| ≥ 1 and 1% ≤ Turnover ≤ 70%. The cheap screening event. |
+| Line | Sharpe ≥ 1.58 and Fitness ≥ 1.0. A local pre-filter before asking the platform. |
+| Family | Same dataset, same stage, same field. One representative (highest Sharpe) is sent to the platform. |
+| Pass | Every platform submission check passes, including correlation with already-submitted signals. |
+| Stage 1 / 2 / 3 | Stage 1: field × template. Stage 2: a selected stage-1 parent wrapped in a group operator. Stage 3: a selected stage-2 parent gated by an entry condition. |
 
-The score $L$ is evaluated after every round of 80 simulations: $L\ge A$ retains, $L\le B$ abandons, otherwise continue. At the 1,600-simulation cap (20 looks) the dataset is retained iff $L\ge 0$, i.e. at least 32 hits.
+**Fixed simulation settings** (identical for every simulation): delay 1; neutralization sub-industry; truncation 0.08; decay starts at 6 and is raised by a rule on turnover; pasteurization on. No part of the 10 years is held out.
 
-Consequences that follow directly: a dataset with zero hits in the first 80 is abandoned immediately ($80\times 0.0463 > 2.890$); three hits in the first 80 retain it ($3\times2.303-77\times0.0463 = 3.34 > A$), two do not. The two hypotheses are equally likely to win at
+```mermaid
+flowchart LR
+  S["Simulation"] --> H["Hit"] --> P["Promotion gate"] --> N["Stage 2 / 3"] --> L["Line"] --> F["Family"] --> K["Platform checks"] --> A["Accepted"]
+```
 
-$$
-p^{*}=\frac{-\Delta L_{\mathrm{miss}}}{\Delta L_{\mathrm{hit}}-\Delta L_{\mathrm{miss}}}\approx 1.97\%,
-$$
+**Noise baseline.** For a signal-free strategy the 10-year Sharpe estimate is approximately N(0, 1/√10), a standard deviation of 0.316. Then P(|Sharpe| ≥ 1) = P(|Z| ≥ 3.16) ≈ 0.157%. Simulations on signal-free data gave 0.15654%, used below as π<sub>noise</sub>. The value holds only for a 10-year history: for 5 years the same calculation gives about 2.5%.
 
-which is the effective retain/abandon line.
+---
 
-**Why 80 per round, distinct fields.** One round is 8 batches of 10, which fills the platform's 10 concurrent slots. Fields within a dataset are correlated, so each round draws 80 different fields with one random template each, to limit within-round dependence.
+## 3. Design
 
-**Operating characteristics.** Exact evaluation by dynamic programming over the 20 looks (independent Bernoulli outcomes):
+### 3.1 D1: dataset gate (Wald sequential probability ratio test)
 
-| True hit rate | Retained | Mean simulations |
+Let p be a dataset's hit probability. Test
+
+H<sub>0</sub>: p = 0.5% against H<sub>1</sub>: p = 5%, with α = 10% (keep a poor dataset) and β = 5% (stop a good one).
+
+The log-likelihood score L starts at 0. Each simulation adds **+2.303** for a hit and **−0.0463** for a miss. L is evaluated after every round of 80. Boundaries: continue-and-keep if L ≥ **+2.251**, stop if L ≤ **−2.890**, otherwise sample another round. At the 1,600-simulation cap the dataset is kept if and only if L ≥ 0, that is at least 32 hits.
+
+Direct consequences:
+
+- Zero hits in the first 80 stops the dataset (80 × 0.0463 = 3.70 > 2.890).
+- Three hits in the first 80 keep it (3 × 2.303 − 77 × 0.0463 = 3.34 > 2.251); two hits do not.
+- The two hypotheses are equally likely to win at p\* = 0.0463 / (2.303 + 0.0463) = **1.97%**, the effective keep/stop line.
+
+Operating characteristics (exact dynamic programme over the 20 looks, independent trials):
+
+| True hit rate | Kept | Mean simulations |
 |---:|---:|---:|
 | 0.16% | 0.03% | 91 |
-| 0.5% | 0.9% | 119 |
-| 1.0% | 7.6% | 161 |
-| 1.5% | 25% | 193 |
-| 2.0% | 49% | 199 |
-| 3.0% | 83% | 161 |
-| 5.0% | 98.1% | 103 |
+| 0.5% | 0.90% | 119 |
+| 1.0% | 7.55% | 161 |
+| 1.5% | 24.95% | 193 |
+| 2.0% | 49.03% | 199 |
+| 3.0% | 83.19% | 161 |
+| 5.0% | 98.10% | 103 |
 | 10% | 99.98% | 81 |
 
-Realised error rates (0.9% at $H_0$, 1.9% at $H_1$) are well below the nominal 10% and 5% because looks are discrete and the boundaries are conservative. These figures assume independent trials; with field-level dependence the effective sample is smaller and the true error rates are not known (assumption 6). The 1,600 cap and the 32-hit tie-break are pragmatic, not derived (assumptions 11-12).
+Realised error rates (0.90% at H<sub>0</sub>, 1.90% at H<sub>1</sub>) are far below the nominal 10% and 5% because looks are discrete and the boundaries conservative. These figures assume independent trials; with dependence the true rates are unknown (assumption 6).
 
-### Luck share
+### 3.2 D2: allocation inside a dataset
 
-For $n$ simulated cells and $h$ observed hits,
+- **Screening rounds.** Each round draws 80 *different* fields and one random template per field. Distinct fields limit dependence inside the round.
+- **Hit-field priority.** Once a field has produced a hit, its remaining templates are queued first. Untested cells are never pruned, only reordered.
+- **Why.** Cells of a field that already hit hit again 19.4% of the time versus 2.2% for other fields (E3).
 
-$$
-\widehat{\text{luck share}}=\frac{n\,\pi_{\mathrm{noise}}}{h}.
-$$
+### 3.3 Staged search
 
-This is a plug-in false-discovery estimate that treats every tested cell as signal-free ($\pi_0=1$), so it is an upper bound on the share of hits attributable to noise under the iid-noise model. It is not a multiplicity-corrected q-value, and it ignores dependence between cells.
+| Stage | Cap per visit | Construction | Promotion into the next stage |
+|---|---:|---|---|
+| 1 | 2,000 | field × template | \|Sharpe\| ≥ 1.2, \|Fitness\| ≥ 0.7, more than 100 positions; best 100; at most 5 per field |
+| 2 | 1,000 | stage-1 parent × group wrapper | \|Sharpe\| ≥ 1.3, \|Fitness\| ≥ 0.8; best 200 |
+| 3 | 1,000 | stage-2 parent × entry condition | none; results go to line check |
 
-## Adaptive Sampling and Staged Search
+Negative signals are flipped before promotion. The caps sum to 4,000, one day's budget. Gate values and the 2,000 / 1,000 / 1,000 split are design choices inherited from earlier versions, not optima (assumption 14).
 
-After the gate, allocation adapts at the field level. The scanner **does not prune** untested cells; it only reorders them: the remaining templates of fields that have already hit are tested first.
+### 3.4 Luck share
 
-### Multi-stage search
+For n simulated cells and h observed hits, luck share = n · π<sub>noise</sub> / h. This is a plug-in upper bound on the share of hits attributable to noise under independent noise. It is not a multiplicity-corrected q-value and ignores dependence.
 
-| Stage | Per-visit cap | Construction |
-|---|---:|---|
-| First order | 2,000 | field × first-order template |
-| Second order | 1,000 | selected parent × group wrapper |
-| Third order | 1,000 | selected parent × conditional `trade_when` variant |
+### 3.5 Submission stage
 
-The 4,000 daily budget is the 5,000 platform quota less 1,000 reserved for a separate pipeline; the 2,000/1,000/1,000 split is a design choice, not an optimum. First-order promotion requires $|\mathrm{Sharpe}|\ge1.2$, $|\mathrm{Fitness}|\ge0.7$ and more than 100 positions; candidates are decay-adjusted, negative signals are flipped, and the best 100 are kept with at most five per field and sign. Second-order promotion uses 1.3 / 0.8 and the best 200. Gate values are inherited from earlier versions, not optimised (assumption 14). Higher-order wrapper names remain abstract in the public implementation.
+Each family representative is sent to the platform for its submission checks. A pass is valid only until the set of submitted signals changes, because correlation is measured against that set; after any submission passes are re-checked. A category cell is treated as saturated once at least 3 accepted signals exist and its remaining datasets are skipped. A separate shortlist for a theme-specific program (Power Pool) applies its own numeric filters. Final submission is always a human action.
 
-## Evidence
+### 3.6 Parameters and their origin
 
-All figures below were recomputed from the run logs on 2026-10-27. They support the allocation method; they are not claims about the performance of any individual alpha.
+| Parameter | Value | Origin | Reason |
+|---|---|---|---|
+| Daily budget | 4,000 | Platform quota 5,000 less 1,000 for a separate pipeline | Fixed by allocation |
+| Round | 80 cells, 80 distinct fields | 8 requests × 10 simulations (platform limits) | One look per full round; distinct fields limit dependence |
+| H<sub>0</sub> | 0.5% | Measured: datasets stopped by the test hit at 0.22% (13 / 5,886) | About 3 × the noise rate of 0.157% |
+| H<sub>1</sub> | 5% | Measured: 13 of 39 datasets at or above 5% (5.3% to 22.6%) | Rounded down from the fitted high group |
+| α, β | 10%, 5% | Design choice | Stopping a good dataset costs more than keeping a poor one |
+| Cap per dataset | 1,600 | Budget guard | No statistical derivation (assumption 11) |
+| Stage caps | 2,000 / 1,000 / 1,000 | Budget guard | Design choice (assumption 14) |
+| Stage gates | 1.2 / 0.7 and 1.3 / 0.8 | Inherited | Not optimised (assumption 14) |
+| Line | Sharpe ≥ 1.58, Fitness ≥ 1.0 | 1.58 is the platform's CLUSTER_TEST limit | Local pre-filter; the real Sharpe limit varies by region |
+| Coverage floor | 40% | Design choice | Excludes sparse fields (smallest inventory value 41.1%) |
+| Minimum active days | 500 | Platform rule, measured 2026-10-14 | Fewer cannot be submitted |
+| Check wait | 180 s | Budget guard | A check not ready is retried the next day |
+| Saturation | 3 accepted per cell | Design choice | Avoids searching an occupied cell |
 
-1. **Dataset quality distribution.** First random round (80 simulations) for 35 datasets: 22 with zero hits (about 23.5 expected if every dataset were at 0.5%), 5 with four or more. A two-point mixture fitted by maximum likelihood: low group about 0.2% (the lowest value searched), high group about 6%, high-group weight about 25%. Replaying the stopping rule over all 36 datasets with first-order logs: 25 abandon, 10 retain, 1 undecided.
-2. **Field-level clustering.** In the 15 datasets with at least 30 first-order results in both states, the hit rate of a cell whose field had already hit was 17.9% (n = 12,970) versus 1.9% (n = 13,754) for fields with no prior hit; the dataset-stratified (Mantel-Haenszel weighted) risk difference is +13.3 percentage points and is positive in all 15 datasets. Pooling across all datasets gives 17.9% versus 1.4%, but that comparison is confounded by dataset quality and is not used. Caution: sampling after a field's first hit is adaptive, so this is an observed association under the scanner's own policy, not a randomised experiment.
-3. **Same-field dependence.** For the same field and operator, the Pearson correlation of signed Sharpe between adjacent windows is 0.875 (5 vs 22 days), 0.854 (22 vs 66), 0.893 (66 vs 120) and 0.917 (120 vs 240), each over about 3,300 pairs pooled across datasets.
-4. **Predictive value of the first result.** The correlation of $|\mathrm{Sharpe}|$ between the first two logged cells of the same field is 0.32 (n = 1,833 fields). The magnitude is only moderately informative, and the policy uses hit/no-hit as its state. Whether a richer state would allocate better is untested. Later cells are chosen adaptively, so this correlation is range-restricted.
-5. **Noise scale.** For 19 datasets with hit rate at or below 0.6% and at least 200 simulations, the standard deviation of Sharpe across cells ranges from 0.25 to 0.38, against 0.316 for a signal-free 10-year history. The spread across datasets is not yet explained (history length, residual signal and universe are candidates).
+---
 
-A first-order expected maximum under noise gives a sense of winner inflation: for 10,000 independent noise Sharpes it is approximately $0.316\sqrt{2\ln 10{,}000}\approx1.36$.
+## 4. Assumptions
 
-## Representative Case
+Every assumption the conclusions rest on. *Relied on by* names the design element; *Evidence* is what the logs show on 2026-10-31. Status: **Supported**, **Challenged**, **Open** (not yet tested), **Known bias**, **Boundary** (true by design), **Handled** (in code).
 
-### USA / Option-Chart Model: one recorded visit (v6 logic)
+### A. Sampling frame
 
-One 4,000-simulation visit moved from broad exploration across **380 fields** to targeted higher-order refinement across **7 selected field families**. Counts below were re-verified against the logs.
+| # | Assumption | Relied on by | If wrong | Evidence | Status |
+|---|---|---|---|---|---|
+| 1 | The 56 templates and the fixed field wrapper (back-fill, winsorize at 4 standard deviations) represent whether a field carries signal | D2, frame | A signal expressed another way is never seen | Hit rate by template ranges from 0% to 7.8%; equal-rate test chi-square 178 against a 5% critical value of about 72 (df 55) (E5). Composition matters; no held-out random template draw yet | Open |
+| 2 | In screening, one random template per field measures the dataset's average quality | D1 | A dataset where only one template works is under-rated | Templates differ (E5), so a single draw is noisy but unbiased when the template is random. Field × template interaction not yet separated | Open |
+| 3 | The relevant population is fields with coverage of at least 40%, vector fields split into two forms | Inventory | Other fields lie outside every conclusion | Inventory minimum coverage is 41.1% | Boundary |
+| 4 | Screening rounds are random and unbiased; later adaptive rounds are not | Rate estimation | Rates from adaptive rounds are inflated | About 11% of first-order records were random on 2026-10-27. The phase is not logged, so this cannot be re-measured | Known bias |
 
-| Stage | Candidate space | Executed simulations | Hits | Hit rate | Promotion-qualified |
-|---|---:|---:|---:|---:|---:|
-| First order | 24,584 | 2,000 | 347 | 17.35% | 36 (13 fields) |
-| Second order | 2,178 | 1,000 | 759 | 75.9% | 216 |
-| Third order | 1,320 | 1,000 | 825 | 82.5% | n/a |
+### B. Dataset model and noise
 
-**Candidate space is not executed budget.** The table reports both so a partially sampled stage is not mistaken for exhaustive evaluation. Later-stage hit rates are conditional on deliberate selection of parents; they are not a causal improvement from 17.35% to 75.9% or 82.5%, and they overstate true quality (winner's curse).
+| # | Assumption | Relied on by | If wrong | Evidence | Status |
+|---|---|---|---|---|---|
+| 5 | A dataset's hit rate takes one of two values (0.5% or 5%) | D1 hypotheses | Real rates are continuous | Of 39 datasets with at least 80 first-order simulations: 19 below 0.5%, 4 in 0.5%–2%, 3 in 2%–5%, 8 in 5%–10%, 5 at or above 10%. The middle (0.5%–5%) holds 7 of 39 (E1) | Partly supported |
+| 6 | Simulations are independent given the dataset | D1 error rates | Effective sample is smaller; true error rates differ from nominal | Same-field Sharpe correlation between adjacent windows is 0.89 to 0.93 (E4) | Challenged |
+| 7 | A dataset's hit rate is constant across visits and time | D1 | Stale verdicts | Repeat visits not compared | Open |
+| 8 | A hit indicates real signal | D1, D2 | Hits are noise or unusable | Hits are not noise (9.8% against 0.157%; luck share 1.6%) but only 1.6% of stage-1 hits reach the line (E8) | Weak |
+| 9 | The noise hit rate (0.15654%) is the same for every region, universe, history length and template | Luck share, H<sub>0</sub> | Luck share wrong by a large factor (about 16 × for 5 years) | Sharpe standard deviation in 18 low-hit datasets is 0.25 to 0.38 (median 0.32) against 0.316 expected (E6). Not tested by region | Open |
+| 10 | Errored and failed simulations are missing at random | All rates | Rates biased if failures concentrate in some fields | 3.8% errored, 0.8% failed of 58,567 records; concentration by field or template not tested | Open |
 
-## Assumptions
+### C. Stopping rule
 
-Every assumption the conclusions rest on. *Check* is how it can be tested from logged data; *Status* is what is known today. Assumptions 20-28 concern the submission stage and the platform; they are stated without thresholds or dates.
+| # | Assumption | Relied on by | If wrong | Evidence | Status |
+|---|---|---|---|---|---|
+| 11 | A 1,600 cap and a look every 80 are adequate | D1 cost | Cost per dataset mis-sized | Datasets stopped by the test stopped after a median of 240 simulations (range 80 to 793); none reached the cap. No derivation of 1,600 | Open |
+| 12 | At the cap, keep if and only if at least 32 hits | D1 | Arbitrary tie-break | Replaying the test on all 39 datasets with at least 80 simulations gives 26 stops and 13 keeps; no dataset was undecided, so the tie-break has not been used | Open |
+| 13 | Datasets stopped by the test contain nothing worth finding | D1 | False-negative rate unknown | 21 datasets stopped by the test: 13 hits in 5,886 simulations (0.22%), 2 line records. No re-test of stopped datasets | Open |
 
-| # | Assumption | If wrong | Check | Status |
+### D. Staged search
+
+| # | Assumption | Relied on by | If wrong | Evidence | Status |
+|---|---|---|---|---|---|
+| 14 | A stage-1 hit predicts improvement under stage-2 and stage-3 variants; the gate values and caps are adequate | Staging | Wasted budget or lost candidates | Stage 2: 67.0% hits, 19.9% line. Stage 3: 84.3% hits, 32.6% line. Both are built from selected parents (see 15). Gates inherited, not optimised | Open |
+| 15 | Later-stage hit rates reflect true quality | Interpretation | They are inflated by selection | Selection bias (winner's curse) is built into the construction | Known bias |
+| 16 | The group and entry-condition variants cover the useful space | Staging | Unlisted variants are never tried | By design | Boundary |
+| 17 | Repeated in-sample selection does not overfit | All | Candidates degrade out of sample | No hold-out beyond platform checks | Known bias |
+| 18 | The same expression always returns the same result | Caching, resume | Cached and repeated results disagree | Not re-run on a sample | Open |
+| 19 | The code implements this document | All | Silent divergence | On 2026-10-27 the rewrite matched the previous version on all 9 real-data comparisons; 70 private unit tests exist, 6 of which currently fail because they assume a setting switched off on 2026-10-31 (see CHANGELOG). The version has run on the platform since 2026-10-28 | Partly supported |
+
+### E. Submission stage
+
+| # | Assumption | Relied on by | If wrong | Evidence | Status |
+|---|---|---|---|---|---|
+| 20 | Screening thresholds on Sharpe and Fitness predict passing the platform checks | Line | Good candidates dropped, or poor ones sent | 71 line families led to 57 checks and 9 passes (E9). Conversion by threshold not estimated | Open |
+| 21 | Signals of the same field, stage and dataset share a check outcome, so one representative suffices | Family | A passable candidate is skipped | Non-representatives not spot-checked | Open |
+| 22 | A pass is valid only while the set of submitted signals is unchanged | Re-check | A stale pass is acted on | Passes expire after any submission and are re-checked | Handled |
+| 23 | Correlation with submitted signals, not Sharpe, is the binding constraint on submission | Search targeting | Effort aimed at the wrong target | 36 of 48 failed checks (75%) include a correlation failure (E9) | Supported |
+| 24 | A category cell is saturated once enough accepted signals exist | Queue | Skipped cells hold unsubmitted value | Heuristic; not compared with realised acceptance | Open |
+| 25 | The program's end conditions and eligibility rules are as understood | Queue | Wasted search or a wrong stop | Rules re-read at each review | Open |
+| 26 | The daily quota and its day boundary are stable and counted as assumed | Budget | Over- or under-spend | Day boundary 21:00 Pacific; counts reconciled against platform notices | Monitored |
+| 27 | Check results are available within the fixed wait | Checks | A false "not ready" | Retry log not yet analysed | Open |
+| 28 | Placeholder descriptions are accepted by the platform | Checks | Submission blocked | Not verified separately | Open |
+
+---
+
+## 5. Evidence
+
+Each row ties an observation to the design choice it supports or challenges. All values are recomputed from the run logs on 2026-10-31. They support the allocation method; they are not claims about the performance of any individual signal.
+
+| # | Design element | Observation | n | Reading |
 |---|---|---|---|---|
-| 1 | The 56 templates and the fixed field wrapper (back-fill, winsorize at 4 standard deviations) represent whether a field carries signal | a signal expressed another way is never seen | hit yield per template | open |
-| 2 | In screening, one random template per field measures the dataset's average quality | a dataset where only one template works is under-rated | field × template hit table | open |
-| 3 | The relevant population is fields with adequate coverage, with vector fields split into two forms | other fields are outside every conclusion | by design | boundary |
-| 4 | Screening rounds are random and unbiased; later adaptive rounds are not | rates from adaptive rounds are inflated | estimate from random rounds only | known: about 11% of first-order records are random-phase |
-| 5 | A dataset's hit rate takes one of two values (0.5% or 5%) | real rates are continuous | fit a continuous mixture to first-round counts | two-point fit adequate on n = 35 |
-| 6 | Simulations are independent given the dataset | effective sample is smaller; true error rates differ from nominal | within-dataset dispersion across random rounds | open: 3 datasets with at least 3 random rounds (dispersion 7.5 vs 1.0 if independent), too few to conclude |
-| 7 | A dataset's hit rate is constant across visits and time | stale verdicts | compare repeat visits | open |
-| 8 | A hit indicates real signal | hits are noise or unusable | conversion from hit to later stages and platform checks | open |
-| 9 | The noise hit rate (0.15654%) is the same for every region, universe, history length and template | luck share wrong by a large factor (about 16 times for a 5-year history) | no-signal simulations per region | open, highest priority |
-| 10 | Errored and failed simulations are missing at random | hit rates biased if failures concentrate in some fields | failures by field and template | known: 4.5% errored, 0.9% failed |
-| 11 | A 1,600 cap and a look every 80 are adequate | cost per dataset mis-sized | cost simulation on fitted rates (11 of 58 cached datasets have fewer than 1,600 cells and never reach the cap) | open |
-| 12 | At the cap, retain iff at least 32 hits | arbitrary tie-break | sensitivity analysis | open |
-| 13 | Abandoned datasets contain nothing worth finding | false-negative rate unknown | re-test a random sample of abandoned datasets | not done |
-| 14 | A first-order hit predicts improvement under second- and third-order variants; the gate values are adequate | wasted budget or lost candidates | stage-to-stage conversion by gate value | open |
-| 15 | Later-stage hit rates reflect true quality | they are inflated by selection | known bias | known |
-| 16 | The group and event variants cover the useful space | unlisted variants are never tried | by design | boundary |
-| 17 | Repeated in-sample selection does not overfit | candidates degrade out of sample | none beyond platform checks | known limitation |
-| 18 | The same expression always returns the same result | cached and repeated results disagree | re-run a sample | open |
-| 19 | The code implements this document | silent divergence | unit tests and old-versus-new parity on real logs | 13 tests here; the private implementation has 67 tests and matched the previous version on all 9 datasets checked; no live run of v7 yet |
-| 20 | Screening thresholds on Sharpe and fitness predict passing the platform's pre-submission checks | good candidates are dropped, or poor ones sent for checking | compare screen outcome with check outcome | open |
-| 21 | Alphas from the same field, stage and dataset share a check outcome, so one representative per family suffices | a checkable candidate is skipped | spot-check non-representatives | open |
-| 22 | A "pass" verdict is valid only while the set of submitted alphas is unchanged, because correlation checks are relative to that set | a stale pass is acted on | recheck after every submission | handled in code |
-| 23 | Correlation with already-submitted alphas, not Sharpe, is the binding constraint on submission | effort is aimed at the wrong target | tabulate rejection reasons | open |
-| 24 | A category cell is saturated once enough accepted plus pending alphas exist, so further search there can be skipped | skipped cells hold unsubmitted value | compare the rule with realised acceptance | open (heuristic) |
-| 25 | The program's end conditions and eligibility criteria are as understood | wasted search or a wrong stop | re-read the rules at each review | open |
-| 26 | The daily simulation quota and its day boundary are stable and counted as assumed | budget over- or under-spend | reconcile counts against platform notices | monitored |
-| 27 | Check results are available within the fixed wait time | a false "not ready" | log of retries | open |
-| 28 | Placeholder descriptions are accepted by the platform | submission is blocked | first live run | not verified |
+| E1 | D1: datasets differ in yield | Hit rate of 39 datasets: 19 below 0.5%, 13 at or above 5%; median 0.5%, mean 4.2%, pooled 9.8% | 39 datasets | Supports a per-dataset test. Pooled rate is 2.4 × the equal-allocation mean, a mix of D1 and D2 effects |
+| E2 | D1: early stopping | 21 datasets stopped by the test: 5.9 thousand simulations spent against an estimated 32.6 thousand for a full first-order visit (about 82% saved). 13 hits in 5,886 simulations (0.22%), 2 line records | 21 datasets | Little appears lost. The saving is a counterfactual that assumes each full visit would have run `min(2,000, cells)` simulations |
+| E3 | D2: hit-field priority | Cells whose field had already hit: 19.4% (3,694 / 19,061). Other cells: 2.2% (377 / 17,239). Stratified difference +14.8 points; positive in 18 of 18 datasets | 18 datasets | Supports D2. Association only: sampling after a hit is adaptive |
+| E4 | Dependence | Same-field Sharpe correlation between adjacent windows: 0.889 (5 vs 22), 0.910 (22 vs 66), 0.911 (66 vs 120), 0.925 (120 vs 240) | 4,686 to 4,704 pairs each | Cells of a field are not independent; motivates distinct-field rounds and weakens nominal error rates |
+| E5 | Frame: templates | Hit rate by operator, first attempt per field: scale 5.6%, rank 5.0%, zscore 4.3%, quantile 4.2%, sum 2.2%, arg_min 2.1%, raw 1.8%, arg_max 1.5%, mean 1.1%, delta 1.0%, delay 0.7%, std_dev 0.6%. By window: 3.3% at 5 days, 2.1% to 2.6% otherwise | 9,993 first attempts | The 56 templates are not exchangeable (chi-square 178, df 55). First attempts are random probes, so adaptive reordering does not bias this |
+| E6 | Noise scale | Sharpe standard deviation across cells of datasets with hit rate at most 0.6%: 0.25 to 0.38, median 0.32 | 18 datasets | Consistent with 0.316 from 1/√10 |
+| E7 | Luck share | 41,622 stage-1 cells × 0.15654% = 65 expected noise hits against 4,079 observed | 41,622 cells | Hits are not noise: luck share 1.6% |
+| E8 | Hit as a proxy | Stage 1: 4,079 hits, 65 lines (1.6% of hits). Stage 2: 5,963 hits, 1,774 lines. Stage 3: 4,377 hits, 1,692 lines | 55,719 cells | A hit rarely reaches the line; later stages are built from selected parents and are not comparable |
+| E9 | Bottleneck | 57 platform checks, 9 passed. Of 48 failures, 36 include a correlation failure (75%) | 57 checks | Correlation with submitted signals, not signal quality, limits submission |
 
-## Limitations and Disclosure Boundary
+![Dataset yield](figures/fig1_dataset_yield.png)
 
-- Within-field sampling reduces dependence during screening but does not eliminate it.
-- The binary hit abstraction discards the continuous information in Sharpe, turnover and other diagnostics.
-- The noise model is horizon-dependent; $1/\sqrt{10}$ is not valid for every history length or return process, and real return series are autocorrelated and fat-tailed.
-- Top-parent and best-of-k selection create winner inflation that is recognised but not corrected here.
-- Platform historical partitions and sub-universe checks are not true future out-of-sample evidence.
-- The repository demonstrates research design and orchestration, not a live, predictive or tradable system.
+![Field clustering](figures/fig2_field_clustering.png)
 
-Real field names, alpha expressions, identifiers, credentials, account details, endpoints, raw logs and private research notes are excluded. Public candidate keys and wrappers are synthetic and non-reversible. Authenticated simulation and final submission require a private adapter and explicit human action.
+![Templates](figures/fig3_templates.png)
 
-## System Design
+![Funnel](figures/fig4_funnel.png)
 
-The public system separates statistical policy from platform execution:
+---
 
-- `statistics.py` implements Wald SPRT decisions and the exploratory noise-FDR diagnostic.
-- `sampling.py` selects diverse screening batches and prioritizes remaining cells from hit fields.
-- `formula_factory.py` creates sanitized first-, second-, and third-order experiment specifications.
-- `pipeline.py` tracks stage budgets, skips completed experiments, and supports pause/resume from prior results.
-- `platform_adapter.py` defines the execution boundary, including explicit retry handling, without authentication or endpoints.
-- `tests/` verifies stopping boundaries, distinct-field batches, hit-field priority, budget caps, retry behavior, and resume behavior.
+## 6. Results to date
 
-Completed experiment keys and sanitized result records can be persisted by the caller and supplied to the next visit. Final platform checks and submission remain manual by design; this repository does not auto-submit research outputs.
+Records from 2026-10-14 to 2026-10-31 14:41 Pacific. 58,567 records: 95.4% completed, 3.8% errored, 0.8% failed. Of the 419 queue entries, 40 have first-order records (9.5%); no conclusion extends to the others.
 
-## Repository Structure
+### 6.1 Funnel by stage
+
+| Stage | Completed cells | Hits | Hit rate | Lines | Line rate | Line families |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 41,622 | 4,079 | 9.8% | 65 | 0.16% | 18 |
+| 2 | 8,907 | 5,963 | 66.9% | 1,774 | 19.9% | 31 |
+| 3 | 5,190 | 4,377 | 84.3% | 1,692 | 32.6% | 22 |
+
+Stages 2 and 3 are built from selected parents; their rates are not comparable with stage 1.
+
+### 6.2 Dataset outcomes
+
+| State | Datasets |
+|---|---:|
+| Stopped by the sequential test | 21 |
+| Stopped by the 500-active-day rule | 2 |
+| Paused (resume next visit) | 9 |
+| Quota ran out (resume next visit) | 2 |
+| Fully searched | 4 |
+| In progress | 2 |
+
+### 6.3 Yield by region and category
+
+First-order hit rate, datasets with at least 80 first-order simulations.
+
+| Region | Category | Datasets | First-order simulations | Hit rate |
+|---|---|---:|---:|---:|
+| GLB | model | 6 | 8,076 | 16.0% |
+| USA | model | 3 | 2,470 | 14.0% |
+| EUR | analyst | 6 | 10,439 | 13.7% |
+| EUR | model | 3 | 5,920 | 7.3% |
+| USA | analyst | 3 | 5,257 | 6.3% |
+| GLB | unlisted | 1 | 728 | 5.8% |
+| USA | news | 3 | 4,399 | 4.1% |
+| AMR | model | 2 | 1,216 | 1.8% |
+| GLB | analyst | 3 | 836 | 0.2% |
+| EUR | news | 3 | 800 | 0.1% |
+| AMR | analyst | 2 | 478 | 0.0% |
+| AMR | news | 2 | 470 | 0.0% |
+| GLB | news | 2 | 500 | 0.0% |
+
+Yield follows region and category together, not category alone (assumption 5, E1).
+
+### 6.4 Daily record
+
+Completed cells by stage, and hits and lines among them. The last row is partial.
+
+| Date | Stage 1 | Stage 2 | Stage 3 | Hits | Lines |
+|---|---:|---:|---:|---:|---:|
+| 10-22 | 740 | 0 | 0 | 3 | 0 |
+| 10-23 | 3,957 | 0 | 0 | 113 | 2 |
+| 10-24 | 2,591 | 990 | 960 | 1,364 | 53 |
+| 10-25 | 2,525 | 800 | 0 | 982 | 279 |
+| 10-26 | 2,794 | 1,000 | 600 | 1,540 | 427 |
+| 10-27 | 1,159 | 140 | 80 | 169 | 5 |
+| 10-28 | 1,545 | 286 | 0 | 423 | 0 |
+| 10-29 | 3,546 | 0 | 0 | 693 | 0 |
+| 10-30 | 3,305 | 0 | 0 | 518 | 0 |
+| 10-31 | 1,360 | 0 | 0 | 142 | 0 |
+
+From 10-28 almost all simulations were first order, because regions of a theme-specific shortlist program (Power Pool) were scanned first-order only; that scan was switched off on 10-31. Stage-1 cells reach the line at 0.16%, so no lines on those days is consistent with the design and does not indicate a change in signal quality.
+
+### 6.5 Submission stage
+
+| Item | Count |
+|---|---:|
+| Platform checks run (2026-10-16 to 2026-10-30) | 57 |
+| Passed | 9 |
+| Failed | 48 |
+| Failures including a correlation failure | 36 |
+| Failures including an in-sample Sharpe ladder failure | 7 |
+| Failures because the signal was already submitted | 6 |
+| Failures including a low 2-year Sharpe | 2 |
+| Accepted signals recorded in the pyramid log | 2 |
+
+A check can fail for more than one reason. Regular candidates awaiting review: 6. Theme shortlist awaiting review: 135 (GLB 79, USA 41, EUR 15).
+
+---
+
+## 7. Limitations
+
+- **Coverage.** 40 of 419 queue entries have first-order records (9.5%). Nothing generalises to the rest.
+- **No control arm.** The allocation was never compared with a uniform or random allocation, so the saving in E2 and the 2.4 × in E1 are estimates from the scanner's own data, not causal effects.
+- **Adaptive sampling.** Rates after a field's first hit, and all stage-2 and stage-3 rates, come from policy-chosen cells and are inflated by selection.
+- **In-sample.** All 10 years are in-sample. Platform historical partitions and sub-universe checks are not true out-of-sample evidence.
+- **Dependence.** Within-field sampling reduces dependence during screening but does not remove it; nominal error rates are optimistic.
+- **Binary hit.** The hit abstraction discards the continuous information in Sharpe, turnover and other diagnostics.
+- **Noise model.** The 1/√10 scale holds for a 10-year history; real return series are autocorrelated and fat-tailed.
+- **Phase not logged.** Whether a cell came from a random round or an adaptive round is not recorded, so assumption 4 cannot be re-measured.
+- **Scope.** This repository demonstrates research design and orchestration, not a live, predictive or tradable system.
+
+Real field names, expressions, identifiers, credentials, account details, endpoints, raw logs and private research notes are excluded. Authenticated simulation and final submission require a private adapter and a human action.
+
+---
+
+## 8. Repository and reproduction
+
+The public package separates statistical policy from platform execution:
+
+- `statistics.py` implements the sequential test and the exploratory luck-share diagnostic.
+- `sampling.py` selects distinct-field screening batches and prioritises remaining cells of hit fields.
+- `formula_factory.py` creates sanitised first-, second- and third-order experiment specifications.
+- `pipeline.py` tracks stage budgets, skips completed experiments and supports pause and resume from prior results.
+- `platform_adapter.py` defines the execution boundary and retry handling, with no authentication and no endpoints.
+- `tests/` checks stopping boundaries, distinct-field batches, hit-field priority, budget caps, retry and resume behaviour (13 tests).
 
 ```text
 alpha-scanner/
-├── README.md          this document: design, evidence, assumptions, status
-├── CHANGELOG.md       weekly updates, newest first
-├── figures/
-│   └── search_grid.svg
-├── scanner/
-│   ├── statistics.py        SPRT gate and luck share
-│   ├── sampling.py          distinct-field rounds, hit-field priority
-│   ├── formula_factory.py   abstract first/second/third-order specifications
-│   ├── pipeline.py          budget-aware orchestration, pause/resume
-│   └── platform_adapter.py  execution boundary and retry wrapper
-├── tests/                   13 deterministic tests
+├── README.md          this document
+├── CHANGELOG.md       weekly log, newest first
+├── figures/           the four figures above
+├── scanner/           statistics, sampling, formula_factory, pipeline, platform_adapter
+├── tests/             13 deterministic tests
 └── pyproject.toml
 ```
 
-Run the tests with `python -m pytest`.
+Run the tests with `python -m pytest`. Completed experiment keys and sanitised result records can be persisted by the caller and supplied to the next visit. Final platform checks and submission remain manual by design.

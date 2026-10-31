@@ -1,6 +1,31 @@
 # Changelog
 
-Weekly updates, newest first. Each entry has the same four parts: what changed, what the data show, what is still unverified, what happens next. The design document is [README.md](README.md); its Current Status section mirrors the latest entry.
+Daily or weekly log, newest first. Each entry: **Ran** (what executed), **Found** (what the data show), **Changed** (design or code), **Open** (known unverified or broken). The design document is [README.md](README.md).
+
+## 2026-10-31 · design v7, first live week
+
+**Ran**
+- v7 has run on the platform since 2026-10-28. Completed cells per day (stage 1 / 2 / 3): 10-28 1,545 / 286 / 0; 10-29 3,546 / 0 / 0; 10-30 3,305 / 0 / 0; 10-31 1,360 / 0 / 0 (partial).
+- Totals through 2026-10-31: 58,567 records (95.4% completed, 3.8% errored, 0.8% failed); 41,622 stage-1, 8,907 stage-2, 5,190 stage-3 completed cells.
+- Platform checks 2026-10-16 to 2026-10-30: 57 run, 9 passed, 48 failed; 36 of the 48 include a correlation failure.
+
+**Found**
+- Hit rate by dataset (39 datasets with at least 80 first-order simulations) ranges from 0% to 22.6%; pooled 9.8%, equal-allocation mean 4.2%.
+- Early stopping: 21 stopped datasets used about 18% of the budget a full first-order visit would have used and yielded 13 hits in 5,886 simulations (0.22%).
+- Cells of a field that had already hit hit again 19.4% of the time versus 2.2% for other fields (positive in 18 of 18 datasets).
+- Template hit rates differ (chi-square 178 on 55 df): scale, rank, zscore and quantile 4.2-5.6%; std_dev, delay, delta and mean 0.6-1.1%.
+- No stage-2 or stage-3 lines on 10-29 to 10-31: those days were first-order only (below).
+
+**Changed**
+- README restructured as a problem statement, definitions, design with parameter origins, a 28-item assumptions table (assumption, dependency, consequence if wrong, test, evidence, status), evidence table, results and limitations, with figures and a table of contents.
+- Regions of a theme-specific shortlist program were scanned first-order only from 10-29; the program was switched off on 10-31.
+- Corrections to the 2026-10-27 entry: its first-order coverage (36 datasets) and record counts are superseded by the totals above.
+
+**Open**
+- 6 of the 70 private unit tests fail because they assume the theme program is on; the running scanner is unaffected.
+- Whether a cell came from a random or an adaptive round is not logged, so assumption 4 cannot be re-measured.
+- No control arm: the allocation has not been compared with uniform allocation.
+- 40 of 419 queued datasets have first-order records.
 
 ## 2026-10-27 · design v7 baseline
 
