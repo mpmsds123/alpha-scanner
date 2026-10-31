@@ -14,7 +14,7 @@ Daily or weekly log, newest first. Each entry: **Ran** (what executed), **Found*
 - Early stopping: 21 stopped datasets used about 18% of the budget a full first-order visit would have used and yielded 13 hits in 5,886 simulations (0.22%).
 - Cells of a field that had already hit hit again 19.4% of the time versus 2.2% for other fields (positive in 18 of 18 datasets).
 - Template hit rates differ (chi-square 178 on 55 df): scale, rank, zscore and quantile 4.2-5.6%; std_dev, delay, delta and mean 0.6-1.1%.
-- Replaying the current dataset gate over the logs: 26 of 39 datasets stop, 13 keep. Seven datasets that ran 640 or more first-order simulations would have been stopped at 80 to 240; they produced 1,668 line records and 3 passes, all from one dataset whose value sat in a few fields. The gate treats a dataset as one hit rate and can miss such datasets (README, E10).
+- Replaying the current dataset gate over the logs: 27 of 40 datasets stop, 13 keep. Against H1 = 2% it saves 16,544 more simulations (27% of the logged 60,533) and loses 1,668 line records and 3 of the 9 passes. Seven datasets that ran 640 or more first-order simulations would have been stopped at 80 to 240; they produced 1,668 line records and 3 passes, all from one dataset whose value sat in a few fields. The gate treats a dataset as one hit rate and can miss such datasets (README, E10).
 - No stage-2 or stage-3 lines on 10-29 to 10-31: those days were first-order only (below).
 
 **Changed**
