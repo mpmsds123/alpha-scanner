@@ -14,15 +14,18 @@ Daily or weekly log, newest first. Each entry: **Ran** (what executed), **Found*
 - Early stopping: 21 stopped datasets used about 18% of the budget a full first-order visit would have used and yielded 13 hits in 5,886 simulations (0.22%).
 - Cells of a field that had already hit hit again 19.4% of the time versus 2.2% for other fields (positive in 18 of 18 datasets).
 - Template hit rates differ (chi-square 178 on 55 df): scale, rank, zscore and quantile 4.2-5.6%; std_dev, delay, delta and mean 0.6-1.1%.
+- Replaying the current dataset gate over the logs: 26 of 39 datasets stop, 13 keep. Seven datasets that ran 640 or more first-order simulations would have been stopped at 80 to 240; they produced 1,668 line records and 3 passes, all from one dataset whose value sat in a few fields. The gate treats a dataset as one hit rate and can miss such datasets (README, E10).
 - No stage-2 or stage-3 lines on 10-29 to 10-31: those days were first-order only (below).
 
 **Changed**
+- README: restored the formulas (search space, hit, noise baseline, sequential test boundaries and increments, luck share) and added a worked example of three datasets, start to finish.
 - README restructured as a problem statement, definitions, design with parameter origins, a 28-item assumptions table (assumption, dependency, consequence if wrong, test, evidence, status), evidence table, results and limitations, with figures and a table of contents.
 - Regions of a theme-specific shortlist program were scanned first-order only from 10-29; the program was switched off on 10-31.
 - Corrections to the 2026-10-27 entry: its first-order coverage (36 datasets) and record counts are superseded by the totals above.
 
 **Open**
 - 6 of the 70 private unit tests fail because they assume the theme program is on; the running scanner is unaffected.
+- Dataset-gate false negatives: unmeasured beyond the 7 cases above; assumption 13 is now marked Challenged.
 - Whether a cell came from a random or an adaptive round is not logged, so assumption 4 cannot be re-measured.
 - No control arm: the allocation has not been compared with uniform allocation.
 - 40 of 419 queued datasets have first-order records.

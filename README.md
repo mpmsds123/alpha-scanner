@@ -8,7 +8,7 @@
 
 1. [Problem](#1-problem)
 2. [Definitions and outcomes](#2-definitions-and-outcomes)
-3. [Design](#3-design)
+3. [Design](#3-design) (worked example: [3.7](#37-worked-example-one-dataset-start-to-finish))
 4. [Assumptions](#4-assumptions)
 5. [Evidence](#5-evidence)
 6. [Results to date](#6-results-to-date)
@@ -24,7 +24,13 @@
 - **Simulator.** A formula (a data field passed through operators) is evaluated over a 10-year daily history. One call returns three statistics: Sharpe, Fitness and Turnover. One call is one *simulation* and costs one unit of budget.
 - **Budget.** B = 4,000 simulations per day (the platform quota of 5,000 less 1,000 reserved for a separate pipeline).
 - **Inventory.** 355 datasets and 81,336 fields in four regions (USA, EUR, GLB, AMR), each with field coverage of at least 40%.
-- **Sampling frame.** 56 first-order templates per field. The first-order frame therefore holds 81,336 × 56 = **4,554,816 cells**, which is 1,139 days of budget before any higher-order search.
+- **Sampling frame.** 56 first-order templates per field. A dataset with $n$ usable fields has
+
+$$
+|\Omega_{\text{first-order}}| = n \times 56
+$$
+
+  cells, and the whole inventory has 81,336 × 56 = **4,554,816** cells, which is 1,139 days of budget before any higher-order search. One 200-field dataset is 11,200 cells; the largest cached field list (6,650 fields) is 372,400 cells, about 93 days.
 
 ### 1.2 Unknown
 
@@ -82,7 +88,7 @@ flowchart LR
 | Field | One column of a dataset. Vector fields enter in two forms (average and sum). |
 | Template | One of 56 fixed formulas on a field: the field itself plus 11 time-series operators × 5 windows (5, 22, 66, 120, 240 days). Every field is first cleaned by `winsorize(ts_backfill(x, 120), std=4)`. |
 | Cell | A (field, template) pair. One cell is one simulation. |
-| Hit | \|Sharpe\| ≥ 1 and 1% ≤ Turnover ≤ 70%. The cheap screening event. |
+| Hit | $\lvert\text{Sharpe}\rvert \ge 1$ and $1\% \le \text{Turnover} \le 70\%$. The cheap screening event. |
 | Line | Sharpe ≥ 1.58 and Fitness ≥ 1.0. A local pre-filter before asking the platform. |
 | Family | Same dataset, same stage, same field. One representative (highest Sharpe) is sent to the platform. |
 | Pass | Every platform submission check passes, including correlation with already-submitted signals. |
@@ -95,7 +101,14 @@ flowchart LR
   S["Simulation"] --> H["Hit"] --> P["Promotion gate"] --> N["Stage 2 / 3"] --> L["Line"] --> F["Family"] --> K["Platform checks"] --> A["Accepted"]
 ```
 
-**Noise baseline.** For a signal-free strategy the 10-year Sharpe estimate is approximately N(0, 1/√10), a standard deviation of 0.316. Then P(|Sharpe| ≥ 1) = P(|Z| ≥ 3.16) ≈ 0.157%. Simulations on signal-free data gave 0.15654%, used below as π<sub>noise</sub>. The value holds only for a 10-year history: for 5 years the same calculation gives about 2.5%.
+**Noise baseline.** For a signal-free strategy with a 10-year daily history the Sharpe estimate is approximately normal:
+
+$$
+\widehat{\text{Sharpe}} \sim N\!\left(0,\tfrac{1}{\sqrt{10}}\right),\qquad
+P\big(\lvert\widehat{\text{Sharpe}}\rvert \ge 1\big) = P(\lvert Z\rvert \ge 3.16) \approx 0.157\%.
+$$
+
+In plain words: even with no signal, about 1 formula in 640 looks like a hit by luck. Simulations on signal-free data gave 0.15654%, used below as $\pi_{\text{noise}}$. The value holds only for a 10-year history: for 5 years the same calculation gives about 2.5%.
 
 ---
 
@@ -103,17 +116,41 @@ flowchart LR
 
 ### 3.1 D1: dataset gate (Wald sequential probability ratio test)
 
-Let p be a dataset's hit probability. Test
+Let $p$ be a dataset's hit probability. Test
 
-H<sub>0</sub>: p = 0.5% against H<sub>1</sub>: p = 5%, with α = 10% (keep a poor dataset) and β = 5% (stop a good one).
+$$
+H_0: p = 0.5\% \qquad\text{against}\qquad H_1: p = 5\%,
+$$
 
-The log-likelihood score L starts at 0. Each simulation adds **+2.303** for a hit and **−0.0463** for a miss. L is evaluated after every round of 80. Boundaries: continue-and-keep if L ≥ **+2.251**, stop if L ≤ **−2.890**, otherwise sample another round. At the 1,600-simulation cap the dataset is kept if and only if L ≥ 0, that is at least 32 hits.
+with $\alpha = 10\%$ (the largest accepted chance of keeping a poor dataset) and $\beta = 5\%$ (the largest accepted chance of stopping a good one). Wald's boundaries on the log-likelihood-ratio score $L$:
+
+$$
+A = \ln\frac{1-\beta}{\alpha} = \ln\frac{0.95}{0.10} \approx +2.251,
+\qquad
+B = \ln\frac{\beta}{1-\alpha} = \ln\frac{0.05}{0.90} \approx -2.890.
+$$
+
+Each simulation moves $L$ (starting at 0) by
+
+$$
+\Delta L_{\text{hit}} = \ln\frac{0.05}{0.005} = +2.303,
+\qquad
+\Delta L_{\text{miss}} = \ln\frac{0.95}{0.995} = -0.0463.
+$$
+
+In plain words: a hit is strong evidence for the high-yield dataset, a miss is weak evidence against it, and the scanner keeps a running total. $L$ is evaluated after every round of 80: keep if $L \ge A$, stop if $L \le B$, otherwise sample another round. At the 1,600-simulation cap (20 looks) the dataset is kept if and only if $L \ge 0$, that is at least 32 hits.
 
 Direct consequences:
 
-- Zero hits in the first 80 stops the dataset (80 × 0.0463 = 3.70 > 2.890).
-- Three hits in the first 80 keep it (3 × 2.303 − 77 × 0.0463 = 3.34 > 2.251); two hits do not.
-- The two hypotheses are equally likely to win at p\* = 0.0463 / (2.303 + 0.0463) = **1.97%**, the effective keep/stop line.
+- Zero hits in the first 80 stops the dataset ($80 \times 0.0463 = 3.70 > 2.890$).
+- Three hits in the first 80 keep it ($3 \times 2.303 - 77 \times 0.0463 = 3.34 > 2.251$); two hits do not.
+- The two hypotheses are equally likely to win at
+
+$$
+p^{*} = \frac{-\Delta L_{\text{miss}}}{\Delta L_{\text{hit}} - \Delta L_{\text{miss}}} = \frac{0.0463}{2.303 + 0.0463} \approx 1.97\%,
+$$
+
+  the effective keep/stop line.
 
 Operating characteristics (exact dynamic programme over the 20 looks, independent trials):
 
@@ -128,7 +165,7 @@ Operating characteristics (exact dynamic programme over the 20 looks, independen
 | 5.0% | 98.10% | 103 |
 | 10% | 99.98% | 81 |
 
-Realised error rates (0.90% at H<sub>0</sub>, 1.90% at H<sub>1</sub>) are far below the nominal 10% and 5% because looks are discrete and the boundaries conservative. These figures assume independent trials; with dependence the true rates are unknown (assumption 6).
+Realised error rates (0.90% at H<sub>0</sub>, 1.90% at H<sub>1</sub>) are far below the nominal 10% and 5% because looks are discrete and the boundaries conservative. These figures assume independent trials; with dependence the true rates are unknown (assumption 6). The test also treats a dataset as one hit rate, while signal is concentrated in a few fields (E3); evidence E10 shows what this can cost.
 
 ### 3.2 D2: allocation inside a dataset
 
@@ -148,7 +185,19 @@ Negative signals are flipped before promotion. The caps sum to 4,000, one day's 
 
 ### 3.4 Luck share
 
-For n simulated cells and h observed hits, luck share = n · π<sub>noise</sub> / h. This is a plug-in upper bound on the share of hits attributable to noise under independent noise. It is not a multiplicity-corrected q-value and ignores dependence.
+For $n$ simulated cells and $h$ observed hits,
+
+$$
+\widehat{\text{luck share}} = \frac{n\,\pi_{\text{noise}}}{h}.
+$$
+
+In plain words: the number of hits pure noise would produce, divided by the hits actually seen. It treats every cell as signal-free, so it is an upper bound on the noise share under independent noise; it is not a multiplicity-corrected q-value and ignores dependence.
+
+Winner inflation gives a sense of how high the best of many noise draws reaches: for $N$ independent noise Sharpes the expected maximum is about
+
+$$
+0.316\sqrt{2\ln N},\qquad N = 10{,}000 \;\Rightarrow\; \approx 1.36 .
+$$
 
 ### 3.5 Submission stage
 
@@ -171,6 +220,27 @@ Each family representative is sent to the platform for its submission checks. A 
 | Minimum active days | 500 | Platform rule, measured 2026-10-14 | Fewer cannot be submitted |
 | Check wait | 180 s | Budget guard | A check not ready is retried the next day |
 | Saturation | 3 accepted per cell | Design choice | Avoids searching an occupied cell |
+
+### 3.7 Worked example: one dataset, start to finish
+
+Three real datasets from the logs, with names removed, run through the current rules (v7). The first is the full path; the second is the common ending; the third is the case the rules handle badly. Visits in the logs used v6 settings (H<sub>1</sub> = 2%); the score below is v7's, replayed over the logged sequence.
+
+**Dataset A, a USA dataset that goes all the way.**
+
+| Step | What the rule does | What happened | Decision |
+|---|---|---|---|
+| 1. Screening round | 80 cells, 80 distinct fields, one random template each | 8 hits. $L = 8 \times 2.303 - 72 \times 0.0463 = 15.09$ | $L \ge 2.251$: keep |
+| 2. Hit-field priority | Remaining templates of fields that hit go first | Rounds 2 to 5 drew from 8 fields and gave 18, 20, 23 and 20 hits | continue to the stage cap |
+| 3. Stage 1 ends | 2,000 simulations; 380 fields touched | 347 hits (17.4%); 37 fields hit. 1,657 of the 2,000 cells (83%) sat on those 37 fields. Luck share $2000 \times 0.0015654 / 347 = 0.9\%$. 0 lines | promote the best cells |
+| 4. Stage 2 | 1,000 simulations on parents from 7 fields, wrapped in group operators | 759 hits, 37 lines, 3 line families | promote the best cells |
+| 5. Stage 3 | 1,000 simulations, same 7 fields, with entry conditions | 825 hits, 158 lines, 3 line families | send families to the platform |
+| 6. Platform checks | One representative per line family; re-checked after each submission | 34 check records: 3 passed, 1 already submitted, 30 failed on correlation | 3 signals pass |
+
+Total spend 4,000 simulations, one day's budget. Stage 2 and 3 hit rates are high because their parents were selected (assumption 15).
+
+**Dataset B, the common ending.** A GLB dataset: the first 80 simulations gave 0 hits, so $L = -80 \times 0.0463 = -3.70 \le -2.890$ and the dataset stopped. It cost 80 simulations instead of a 2,000-simulation first-order visit (1,920 saved).
+
+**Dataset C, the stress case.** A USA dataset: the first seven rounds (560 simulations) gave 8 hits (1.4%), so $L$ was $-3.70$ after round 1 and $-7.13$ after round 7. Under v7 it would have stopped after 80 simulations. The logged run continued and, in round 8, 17 of 80 cells hit across only 8 fields. It ended with 156 first-order hits in 2,000 simulations, 1,192 line records and 3 signals that passed the platform checks. The gate saw a low average hit rate; the value sat in a few fields. E10 quantifies this.
 
 ---
 
@@ -204,7 +274,7 @@ Every assumption the conclusions rest on. *Relied on by* names the design elemen
 |---|---|---|---|---|---|
 | 11 | A 1,600 cap and a look every 80 are adequate | D1 cost | Cost per dataset mis-sized | Datasets stopped by the test stopped after a median of 240 simulations (range 80 to 793); none reached the cap. No derivation of 1,600 | Open |
 | 12 | At the cap, keep if and only if at least 32 hits | D1 | Arbitrary tie-break | Replaying the test on all 39 datasets with at least 80 simulations gives 26 stops and 13 keeps; no dataset was undecided, so the tie-break has not been used | Open |
-| 13 | Datasets stopped by the test contain nothing worth finding | D1 | False-negative rate unknown | 21 datasets stopped by the test: 13 hits in 5,886 simulations (0.22%), 2 line records. No re-test of stopped datasets | Open |
+| 13 | Datasets stopped by the test contain nothing worth finding | D1 | False negatives: strong fields inside a low-average dataset are never reached | 21 datasets stopped by the test: 13 hits in 5,886 simulations (0.22%), 2 line records. Replaying the current gate over the logs, 7 datasets that ran 640 or more first-order simulations would have stopped at 80 to 240; they produced 1,668 line records and 3 passes, all from one dataset (E10) | Challenged |
 
 ### D. Staged search
 
@@ -240,7 +310,7 @@ Each row ties an observation to the design choice it supports or challenges. All
 | # | Design element | Observation | n | Reading |
 |---|---|---|---|---|
 | E1 | D1: datasets differ in yield | Hit rate of 39 datasets: 19 below 0.5%, 13 at or above 5%; median 0.5%, mean 4.2%, pooled 9.8% | 39 datasets | Supports a per-dataset test. Pooled rate is 2.4 × the equal-allocation mean, a mix of D1 and D2 effects |
-| E2 | D1: early stopping | 21 datasets stopped by the test: 5.9 thousand simulations spent against an estimated 32.6 thousand for a full first-order visit (about 82% saved). 13 hits in 5,886 simulations (0.22%), 2 line records | 21 datasets | Little appears lost. The saving is a counterfactual that assumes each full visit would have run `min(2,000, cells)` simulations |
+| E2 | D1: early stopping | 21 datasets stopped by the test: 5.9 thousand simulations spent against an estimated 32.6 thousand for a full first-order visit (about 82% saved). 13 hits in 5,886 simulations (0.22%), 2 line records | 21 datasets | Little is lost among datasets the test actually stopped, which is a biased sample: they were stopped because they looked poor. The saving is a counterfactual that assumes each full visit would have run `min(2,000, cells)` simulations. See E10 for the other direction |
 | E3 | D2: hit-field priority | Cells whose field had already hit: 19.4% (3,694 / 19,061). Other cells: 2.2% (377 / 17,239). Stratified difference +14.8 points; positive in 18 of 18 datasets | 18 datasets | Supports D2. Association only: sampling after a hit is adaptive |
 | E4 | Dependence | Same-field Sharpe correlation between adjacent windows: 0.889 (5 vs 22), 0.910 (22 vs 66), 0.911 (66 vs 120), 0.925 (120 vs 240) | 4,686 to 4,704 pairs each | Cells of a field are not independent; motivates distinct-field rounds and weakens nominal error rates |
 | E5 | Frame: templates | Hit rate by operator, first attempt per field: scale 5.6%, rank 5.0%, zscore 4.3%, quantile 4.2%, sum 2.2%, arg_min 2.1%, raw 1.8%, arg_max 1.5%, mean 1.1%, delta 1.0%, delay 0.7%, std_dev 0.6%. By window: 3.3% at 5 days, 2.1% to 2.6% otherwise | 9,993 first attempts | The 56 templates are not exchangeable (chi-square 178, df 55). First attempts are random probes, so adaptive reordering does not bias this |
@@ -248,6 +318,7 @@ Each row ties an observation to the design choice it supports or challenges. All
 | E7 | Luck share | 41,622 stage-1 cells × 0.15654% = 65 expected noise hits against 4,079 observed | 41,622 cells | Hits are not noise: luck share 1.6% |
 | E8 | Hit as a proxy | Stage 1: 4,079 hits, 65 lines (1.6% of hits). Stage 2: 5,963 hits, 1,774 lines. Stage 3: 4,377 hits, 1,692 lines | 55,719 cells | A hit rarely reaches the line; later stages are built from selected parents and are not comparable |
 | E9 | Bottleneck | 57 platform checks, 9 passed. Of 48 failures, 36 include a correlation failure (75%) | 57 checks | Correlation with submitted signals, not signal quality, limits submission |
+| E10 | D1: false negatives | Replaying the v7 gate over the first-order logs of the 39 datasets with at least 80 simulations: 26 stops, 13 keeps. Seven datasets that ran 640 or more first-order simulations would have stopped at 80 to 240: 1,668 line records and 3 passes between them, all 3 passes from one dataset (random-round hit rate 1.4%, then 156 hits in 2,000 simulations, concentrated in a few fields) | 7 datasets | The gate can stop a dataset whose value sits in a few fields. Evidence of a design gap, with n = 7 and one dataset carrying the passes. The replay assumes the first 80 logged simulations of each dataset were a screening round, which was checked for one dataset only |
 
 ![Dataset yield](figures/fig1_dataset_yield.png)
 
@@ -349,6 +420,7 @@ A check can fail for more than one reason. Regular candidates awaiting review: 6
 - **Adaptive sampling.** Rates after a field's first hit, and all stage-2 and stage-3 rates, come from policy-chosen cells and are inflated by selection.
 - **In-sample.** All 10 years are in-sample. Platform historical partitions and sub-universe checks are not true out-of-sample evidence.
 - **Dependence.** Within-field sampling reduces dependence during screening but does not remove it; nominal error rates are optimistic.
+- **Gate false negatives.** The dataset gate treats a dataset as one hit rate. A dataset with a low average and a few strong fields can be stopped (E10); the stop rule's cost on such datasets is unmeasured beyond 7 cases.
 - **Binary hit.** The hit abstraction discards the continuous information in Sharpe, turnover and other diagnostics.
 - **Noise model.** The 1/√10 scale holds for a 10-year history; real return series are autocorrelated and fat-tailed.
 - **Phase not logged.** Whether a cell came from a random round or an adaptive round is not recorded, so assumption 4 cannot be re-measured.
