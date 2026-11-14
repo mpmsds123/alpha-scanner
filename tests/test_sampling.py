@@ -1,32 +1,33 @@
 import random
 
-from scanner.sampling import Cell, choose_round
+from scanner.sampling import Cell, plan_round
 
 
-def test_round_uses_distinct_fields_when_capacity_allows() -> None:
-    cells = {
-        f"field-{i}": [Cell(f"field-{i}", f"template-{j}") for j in range(3)]
-        for i in range(100)
-    }
-    selected = choose_round(cells, completed=[], hit_fields=set(), size=80, rng=random.Random(7))
-    assert len(selected) == 80
-    assert len({cell.field_key for cell in selected}) == 80
+def grid(n_fields, n_templates):
+    return {f"field-{i}": [Cell(f"field-{i}", f"field-{i}/t{j}") for j in range(n_templates)] for i in range(n_fields)}
 
 
-def test_hit_fields_are_prioritized() -> None:
-    cells = {
-        "hit-field": [Cell("hit-field", "a"), Cell("hit-field", "b")],
-        "other-field": [Cell("other-field", "c")],
-    }
-    selected = choose_round(cells, completed=[], hit_fields={"hit-field"}, size=1, rng=random.Random(1))
-    assert selected[0].field_key == "hit-field"
+def test_screening_uses_distinct_unprobed_fields():
+    plan = plan_round(grid(100, 3), [], set(), [], [], mining=False, size=80, rng=random.Random(7))
+    assert len(plan.screening) == 80
+    assert len({c.field_key for c in plan.screening}) == 80
+    assert not plan.followups and not plan.mining
 
 
-def test_small_dataset_fills_from_additional_cells() -> None:
-    cells = {
-        "field-a": [Cell("field-a", str(i)) for i in range(5)],
-        "field-b": [Cell("field-b", str(i)) for i in range(5)],
-    }
-    selected = choose_round(cells, completed=[], hit_fields=set(), size=6, rng=random.Random(2))
-    assert len(selected) == 6
+def test_followups_come_first_and_are_not_screening():
+    cells = grid(10, 5)
+    plan = plan_round(cells, [], {"field-0"}, ["field-0"], [], mining=False, size=3, rng=random.Random(1))
+    assert [c.field_key for c in plan.followups] == ["field-0"] * 3
+    assert plan.screening == []
 
+
+def test_probed_cold_fields_are_not_resampled_before_mining():
+    cells = grid(2, 5)
+    plan = plan_round(cells, [], {"field-0", "field-1"}, [], [], mining=False, size=6, rng=random.Random(2))
+    assert plan.cells() == []
+
+
+def test_mining_fills_hot_fields_first():
+    cells = grid(3, 4)
+    plan = plan_round(cells, [], {"field-0", "field-1", "field-2"}, [], ["field-2"], mining=True, size=4, rng=random.Random(3))
+    assert {c.field_key for c in plan.mining} == {"field-2"}

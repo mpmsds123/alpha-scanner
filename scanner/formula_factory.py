@@ -27,6 +27,7 @@ class FormulaSpec:
     order: Order
     parent_key: str | None = None
     wrapper_key: str | None = None
+    sign: int = 1  # +1 as written, -1 flipped; the adapter must apply it
 
 
 def first_order_specs(field_keys: Iterable[str], template_keys: Iterable[str]) -> list[FormulaSpec]:
@@ -59,6 +60,7 @@ def wrap_specs(parents: Iterable[FormulaSpec], wrapper_keys: Iterable[str], orde
             order=order,
             parent_key=parent.candidate_key,
             wrapper_key=wrapper,
+            sign=parent.sign,
         )
         for parent in parents
         for wrapper in wrappers

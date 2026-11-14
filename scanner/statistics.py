@@ -87,6 +87,42 @@ class SequentialTest:
         return SPRTDecision.CONTINUE
 
 
+@dataclass(frozen=True)
+class FieldTestConfig:
+    """Per-field SPRT: is this field hot (q_hot) or cold (q_cold)?
+
+    Rates are the README E3 measurement: cells of a field that already hit
+    hit again 19.4%; other cells 2.2%. The field's triggering hit is excluded
+    from the test, because the field was selected for testing on that hit.
+    """
+
+    q_cold: float = 0.022
+    q_hot: float = 0.194
+    miss_hot: float = 0.05
+    keep_cold: float = 0.05
+    cap: int = 30
+
+    def as_sprt(self) -> SPRTConfig:
+        return SPRTConfig(
+            p_bad=self.q_cold, p_good=self.q_hot,
+            miss_good=self.miss_hot, keep_bad=self.keep_cold, cap=self.cap,
+        )
+
+
+def screening_probes_needed(pi_min: float, q_hot: float, miss: float) -> int:
+    """Distinct-field probes F so that a dataset whose hot-field share is at
+    least ``pi_min`` shows no screening hit with probability at most ``miss``.
+
+    One probe = one random template on one never-probed field, so it hits a
+    hot field's signal with probability pi_min * q_hot.
+        F = ln(miss) / ln(1 - pi_min * q_hot)
+    """
+
+    if not (0 < pi_min <= 1 and 0 < q_hot <= 1 and 0 < miss < 1):
+        raise ValueError("invalid screening design inputs")
+    return math.ceil(math.log(miss) / math.log(1 - pi_min * q_hot))
+
+
 def expected_noise_hits(trials: int, noise_hit_rate: float = 0.0015654) -> float:
     """Expected threshold crossings under the documented 10-year noise model."""
 

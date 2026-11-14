@@ -46,8 +46,8 @@ def test_zero_hit_dataset_is_abandoned_at_first_look() -> None:
     config = ScannerConfig(first_order_visit_cap=300)
     report = AdaptiveScanner(FakeAdapter(set()), config=config, seed=4).run_visit(specs)
     assert report.state == DatasetState.ABANDONED
-    assert report.simulations == 80
-    assert report.note == "SPRT gate"
+    assert report.simulations == 300  # all 300 fields probed once, no hit
+    assert report.note == "dataset gate"
 
 
 def test_history_gate_precedes_more_spending() -> None:

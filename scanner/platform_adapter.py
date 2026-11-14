@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, Sequence
 
 from .formula_factory import FormulaSpec
@@ -16,10 +16,29 @@ class SimulationResult:
     fitness: float
     turnover: float
     positions: int = 0
+    # Names of in-sample checks that FAILED in the simulation result itself
+    # (no submission call needed). Correlation checks are pending at that
+    # point and must not be listed here.
+    failed_checks: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def is_first_order_hit(self) -> bool:
         return abs(self.sharpe) >= 1.0 and 0.01 <= self.turnover <= 0.70
+
+    def is_line(self, min_sharpe: float = 1.58, min_fitness: float = 1.0) -> bool:
+        """Local pre-filter before the platform check.
+
+        Sharpe and fitness are taken in absolute value because a negative
+        record is submitted flipped. A record that already failed any
+        in-sample check would fail the platform check for the same reason,
+        so it is not a line.
+        """
+
+        return (
+            abs(self.sharpe) >= min_sharpe
+            and abs(self.fitness) >= min_fitness
+            and not self.failed_checks
+        )
 
 
 class PlatformAdapter(Protocol):

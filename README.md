@@ -2,7 +2,7 @@
 
 ### Sequential experimental design for allocating a fixed simulation budget in alpha discovery
 
-**Design version v7 · data through 2026-10-31 · weekly log in [CHANGELOG.md](CHANGELOG.md)**
+**Design version v8 (gate, 2026-11-14) · data through 2026-10-31 · weekly log in [CHANGELOG.md](CHANGELOG.md)**
 
 ## Contents
 
@@ -89,8 +89,8 @@ flowchart LR
 | Template | One of 56 fixed formulas on a field: the field itself plus 11 time-series operators × 5 windows (5, 22, 66, 120, 240 days). Every field is first cleaned by `winsorize(ts_backfill(x, 120), std=4)`. |
 | Cell | A (field, template) pair. One cell is one simulation. |
 | Hit | $\lvert\text{Sharpe}\rvert \ge 1$ and $1\% \le \text{Turnover} \le 70\%$. The cheap screening event. |
-| Line | Sharpe ≥ 1.58 and Fitness ≥ 1.0. A local pre-filter before asking the platform. |
-| Family | Same dataset, same stage, same field. One representative (highest Sharpe) is sent to the platform. |
+| Line | Sharpe ≥ 1.58, Fitness ≥ 1.0, and no in-sample check already failed in the simulation result (ladder, sub-universe, 2-year Sharpe, concentrated weight). A local pre-filter before asking the platform. |
+| Family | Same dataset, same stage, same field. One representative is sent to the platform: the highest-Sharpe member that is a line. |
 | Pass | Every platform submission check passes, including correlation with already-submitted signals. |
 | Stage 1 / 2 / 3 | Stage 1: field × template. Stage 2: a selected stage-1 parent wrapped in a group operator. Stage 3: a selected stage-2 parent gated by an entry condition. |
 
@@ -114,58 +114,31 @@ In plain words: even with no signal, about 1 formula in 640 looks like a hit by 
 
 ## 3. Design
 
-### 3.1 D1: dataset gate (Wald sequential probability ratio test)
+### 3.1 D1: dataset gate (v8: screening probes + per-field sequential test)
 
-Let $p$ be a dataset's hit probability. Test
+v7 tested one average hit rate per dataset ($H_0: p=0.5\%$ vs $H_1: p=5\%$). That is the wrong parameter: signal sits in a few fields (E3, E10), so a dataset's average can be low while it holds the best fields. Monte Carlo with the measured rates (`audit/gate_montecarlo.py`) shows the v7 gate keeps a dataset with 37 strong fields in 380 only 16% of the time, and one with 8 strong fields in 300 only 1%. v8 asks a different question: **does the dataset contain a hot field?**
 
-$$
-H_0: p = 0.5\% \qquad\text{against}\qquad H_1: p = 5\%,
-$$
+**Field model** (measured, E3): a hot field's cells hit at $q_h = 19.4\%$, other cells at $q_c = 2.2\%$.
 
-with $\alpha = 10\%$ (the largest accepted chance of keeping a poor dataset) and $\beta = 5\%$ (the largest accepted chance of stopping a good one). Wald's boundaries on the log-likelihood-ratio score $L$:
+**Screening probe**: one random template on a field never probed before. A dataset whose share of hot fields is $\pi$ shows a hit on a probe with probability at least $\pi q_h$. The number of probes so that a dataset with $\pi \ge \pi_{\min}$ is missed with probability at most $m$:
 
 $$
-A = \ln\frac{1-\beta}{\alpha} = \ln\frac{0.95}{0.10} \approx +2.251,
-\qquad
-B = \ln\frac{\beta}{1-\alpha} = \ln\frac{0.05}{0.90} \approx -2.890.
+F = \frac{\ln m}{\ln(1-\pi_{\min} q_h)}, \qquad \pi_{\min}=3\%,\ m=10\% \;\Rightarrow\; F = 395 \to 400 \text{ (5 rounds of 80)}.
 $$
 
-Each simulation moves $L$ (starting at 0) by
+In plain words: after 400 distinct fields without a confirmed hot field, a dataset with at least 3% hot fields would have been caught 90% of the time. A dataset with fewer than 400 fields is probed once per field.
 
-$$
-\Delta L_{\text{hit}} = \ln\frac{0.05}{0.005} = +2.303,
-\qquad
-\Delta L_{\text{miss}} = \ln\frac{0.95}{0.995} = -0.0463.
-$$
+**Per-field test**: a field that hits is tested on its own with a Wald SPRT, $q_c=2.2\%$ against $q_h=19.4\%$, $\alpha=\beta=5\%$, cap 30 cells. The hit that selected the field is not counted. Each follow-up hit adds $\ln(0.194/0.022)=+2.18$, each miss $\ln(0.806/0.978)=-0.19$; boundaries $\pm\ln 19=\pm 2.94$. Two follow-up hits confirm the field hot; 16 misses in a row confirm it cold.
 
-In plain words: a hit is strong evidence for the high-yield dataset, a miss is weak evidence against it, and the scanner keeps a running total. $L$ is evaluated after every round of 80: keep if $L \ge A$, stop if $L \le B$, otherwise sample another round. At the 1,600-simulation cap (20 looks) the dataset is kept if and only if $L \ge 0$, that is at least 32 hits.
+**Decision**: mine the dataset as soon as one field is confirmed hot. Stop it only when $\min(F, n_{\text{fields}})$ fields have been probed and every field that hit has tested cold. Only screening probes enter the dataset estimate; follow-up cells were chosen because of a hit and are recorded separately (`screening_keys`), which also removes the adaptive-sampling bias of assumption 4.
 
-Direct consequences:
+| Synthetic dataset (rates from E2, E3) | v7 kept | v8 kept | v8 cost when stopped |
+|---|---:|---:|---:|
+| 300 fields, none hot (cold 0.3%) | 0.5% | 0.0% | 315 |
+| 300 fields, 8 hot (Dataset C shape) | 1.0% | 81.5% | 315 |
+| 380 fields, 37 hot (Dataset A shape) | 16.0% | 100.0% | never stopped |
 
-- Zero hits in the first 80 stops the dataset ($80 \times 0.0463 = 3.70 > 2.890$).
-- Three hits in the first 80 keep it ($3 \times 2.303 - 77 \times 0.0463 = 3.34 > 2.251$); two hits do not.
-- The two hypotheses are equally likely to win at
-
-$$
-p^{*} = \frac{-\Delta L_{\text{miss}}}{\Delta L_{\text{hit}} - \Delta L_{\text{miss}}} = \frac{0.0463}{2.303 + 0.0463} \approx 1.97\%,
-$$
-
-  the effective keep/stop line.
-
-Operating characteristics (exact dynamic programme over the 20 looks, independent trials):
-
-| True hit rate | Kept | Mean simulations |
-|---:|---:|---:|
-| 0.16% | 0.03% | 91 |
-| 0.5% | 0.90% | 119 |
-| 1.0% | 7.55% | 161 |
-| 1.5% | 24.95% | 193 |
-| 2.0% | 49.03% | 199 |
-| 3.0% | 83.19% | 161 |
-| 5.0% | 98.10% | 103 |
-| 10% | 99.98% | 81 |
-
-Realised error rates (0.90% at H<sub>0</sub>, 1.90% at H<sub>1</sub>) are far below the nominal 10% and 5% because looks are discrete and the boundaries conservative. These figures assume independent trials; with dependence the true rates are unknown (assumption 6). The test also treats a dataset as one hit rate, while signal is concentrated in a few fields (E3); evidence E10 shows what this can cost.
+**Cost**: a dead dataset now costs about 315 simulations instead of about 100. At the 2026-11-07 yield (0.14 passes per 1,000), the extra ~210 simulations are worth about 0.03 passes. Dataset C alone gave 3 passes, so v8 pays off if at least 1 dataset in 100 has that shape; the logs show 1 in 40 (E10).
 
 ### 3.2 D2: allocation inside a dataset
 
@@ -209,13 +182,13 @@ Each family representative is sent to the platform for its submission checks. A 
 |---|---|---|---|
 | Daily budget | 4,000 | Platform quota 5,000 less 1,000 for a separate pipeline | Fixed by allocation |
 | Round | 80 cells, 80 distinct fields | 8 requests × 10 simulations (platform limits) | One look per full round; distinct fields limit dependence |
-| H<sub>0</sub> | 0.5% | Measured: datasets stopped by the test hit at 0.22% (13 / 5,886) | About 3 × the noise rate of 0.157% |
-| H<sub>1</sub> | 5% | Measured: 13 of 39 datasets at or above 5% (5.3% to 22.6%) | Rounded down from the fitted high group |
-| α, β | 10%, 5% | Design choice | Stopping a good dataset costs more than keeping a poor one |
-| Cap per dataset | 1,600 | Budget guard | No statistical derivation (assumption 11) |
+| Field test q<sub>c</sub>, q<sub>h</sub> | 2.2%, 19.4% | Measured (E3): other cells vs cells of a field that already hit | Per-field SPRT hypotheses |
+| Field test α, β, cap | 5%, 5%, 30 | Design choice | Symmetric errors; cap bounds cost per field |
+| Hot-field share to detect π<sub>min</sub>, miss m | 3%, 10% | Design choice | Gives F = 400 screening probes (section 3.1) |
+| Follow-ups per field per round | 8 | Design choice | A field resolves in one or two rounds |
 | Stage caps | 2,000 / 1,000 / 1,000 | Budget guard | Design choice (assumption 14) |
 | Stage gates | 1.2 / 0.7 and 1.3 / 0.8 | Inherited | Not optimised (assumption 14) |
-| Line | Sharpe ≥ 1.58, Fitness ≥ 1.0 | 1.58 is the platform's CLUSTER_TEST limit | Local pre-filter; the real Sharpe limit varies by region |
+| Line | Sharpe ≥ 1.58, Fitness ≥ 1.0, no failed in-sample check | 1.58 is the platform's CLUSTER_TEST limit; checks from the simulation result | 67% of failed platform checks (11-07) were in-sample checks visible before the check call |
 | Coverage floor | 40% | Design choice | Excludes sparse fields (smallest inventory value 41.1%) |
 | Minimum active days | 500 | Platform rule, measured 2026-10-14 | Fewer cannot be submitted |
 | Check wait | 180 s | Budget guard | A check not ready is retried the next day |

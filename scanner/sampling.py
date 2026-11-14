@@ -1,8 +1,18 @@
-"""Field-first adaptive sampling without exposing research field names."""
+"""Field-first adaptive sampling without exposing research field names.
+
+Each round has two kinds of cells, and they are recorded separately because
+they answer different questions:
+
+* screening cell: one random template on a field never probed before. Only
+  these estimate how common hot fields are in the dataset (README D1).
+* follow-up cell: another template on a field that already hit. These test
+  that one field (per-field SPRT) and are never fed to the dataset estimate,
+  because they were chosen *because* of a hit (adaptive selection).
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 import random
 from typing import Iterable, Mapping, Sequence
 
@@ -15,50 +25,71 @@ class Cell:
     template_key: str
 
 
-def choose_round(
+@dataclass
+class RoundPlan:
+    followups: list[Cell] = dc_field(default_factory=list)
+    screening: list[Cell] = dc_field(default_factory=list)
+    mining: list[Cell] = dc_field(default_factory=list)
+
+    def cells(self) -> list[Cell]:
+        return self.followups + self.screening + self.mining
+
+
+def plan_round(
     cells_by_field: Mapping[str, Sequence[Cell]],
     completed: Iterable[Cell],
-    hit_fields: set[str],
+    probed_fields: set[str],
+    testing_fields: Iterable[str],
+    hot_fields: Iterable[str],
+    mining: bool,
     size: int = 80,
+    followups_per_field: int = 8,
     rng: random.Random | None = None,
-) -> list[Cell]:
-    """Choose a batch while prioritizing fields that already produced a hit.
+) -> RoundPlan:
+    """Plan one round of at most ``size`` cells.
 
-    Stage one takes at most one cell per field, which keeps the dataset gate
-    close to its independence assumption. Hit fields are visited first. If the
-    dataset has fewer fields than the requested batch size, stage two fills the
-    remaining capacity from other untested cells.
+    Order: (1) up to ``followups_per_field`` follow-ups per field still under test, (2) screening probes
+    on never-probed fields, one per field, (3) only once the dataset is being
+    mined, remaining cells with hot fields first. Untested cells are never
+    pruned; before mining starts, cold fields are not re-sampled.
     """
 
+    plan = RoundPlan()
     if size <= 0:
-        return []
+        return plan
     rng = rng or random.Random()
     done = set(completed)
     remaining = {
-        field: [cell for cell in cells if cell not in done]
-        for field, cells in cells_by_field.items()
+        f: [c for c in cells if c not in done] for f, cells in cells_by_field.items()
     }
-    remaining = {field: cells for field, cells in remaining.items() if cells}
+    remaining = {f: cells for f, cells in remaining.items() if cells}
+    taken: set[Cell] = set()
 
-    priority = [field for field in remaining if field in hit_fields]
-    ordinary = [field for field in remaining if field not in hit_fields]
-    rng.shuffle(priority)
-    rng.shuffle(ordinary)
+    def take(bucket: list[Cell], cell: Cell) -> bool:
+        bucket.append(cell)
+        taken.add(cell)
+        return len(taken) >= size
 
-    selected: list[Cell] = []
-    for field in priority + ordinary:
-        selected.append(rng.choice(remaining[field]))
-        if len(selected) == size:
-            return selected
+    testing = [f for f in testing_fields if f in remaining]
+    rng.shuffle(testing)
+    for f in testing:
+        for c in rng.sample(remaining[f], min(followups_per_field, len(remaining[f]))):
+            if take(plan.followups, c):
+                return plan
 
-    selected_set = set(selected)
-    pool = [
-        cell
-        for cells in remaining.values()
-        for cell in cells
-        if cell not in selected_set
-    ]
-    rng.shuffle(pool)
-    selected.extend(pool[: size - len(selected)])
-    return selected
+    fresh = [f for f in remaining if f not in probed_fields]
+    rng.shuffle(fresh)
+    for f in fresh:
+        if take(plan.screening, rng.choice(remaining[f])):
+            return plan
 
+    if mining:
+        hot = set(hot_fields)
+        pool_hot = [c for f in remaining if f in hot for c in remaining[f] if c not in taken]
+        pool_rest = [c for f in remaining if f not in hot for c in remaining[f] if c not in taken]
+        rng.shuffle(pool_hot)
+        rng.shuffle(pool_rest)
+        for c in pool_hot + pool_rest:
+            if take(plan.mining, c):
+                return plan
+    return plan

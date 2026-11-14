@@ -2,6 +2,33 @@
 
 Weekly log, newest first. Each entry has six parts: **Summary** (simulations, passes, submissions), **Performance** (passes per 1,000 simulations against the prior week and a 1‰ baseline, by region and category), **Assumption checks** (README section 4 items tested by the week's data), **Logic changes** (design or code), **Risks / known issues**, **Next week**. Entries before 2026-11-07 use the earlier Ran / Found / Changed / Open format. The design document is [README.md](README.md).
 
+## 2026-11-14 · logic audit, design v8
+
+Reproduce: `python -m pytest -q` (20 tests) and `python audit/gate_montecarlo.py`.
+
+**Problems found**
+
+| # | Problem | Why it is wrong | Evidence |
+|---|---|---|---|
+| P1 | Dataset gate tests one average hit rate (0.5% vs 5%) | Signal sits in a few fields (E3: 19.4% vs 2.2%), so the average is the wrong parameter; one 80-cell round rarely touches the few strong fields | Monte Carlo, measured rates: v7 keeps a 37-hot-field dataset 16%, an 8-hot-field dataset 1% (E10's Dataset C) |
+| P2 | H<sub>1</sub> = 5% was calibrated on per-dataset rates that include adaptive follow-up cells | About 89% of first-order records were adaptive (assumption 4); the test itself is applied mostly to the first random round. Hypothesis and data measure different things | README assumption 4, E1 |
+| P3 | After round 1 the gate was fed follow-up cells chosen because their field hit | Violates the i.i.d. assumption of the SPRT; stated α, β do not hold | `pipeline.py` v7, `test.update(outcomes)` on every batch |
+| P4 | Sign of a flipped parent was not carried to its stage-2 and stage-3 children | Children of a negative parent were built on the unflipped signal | `FormulaSpec` had no sign field |
+| P5 | Line and family representative ignored the in-sample checks already in the simulation result | 67% of 11-07 check failures were in-sample (ladder 128, sub-universe 57, concentration 42, 2-year 32); the highest-Sharpe member was sent even when it had already failed, and a passing sibling was skipped (11-05 manual submission) | CHANGELOG 2026-11-07, assumptions #20, #21 |
+
+**Fixes**
+
+- P1–P3: new gate (README 3.1). Screening probes (one random template on a never-probed field) estimate whether hot fields exist; each field that hits gets its own SPRT (2.2% vs 19.4%, α = β = 5%, the triggering hit excluded). Mine on the first confirmed hot field; stop only after 400 probes (or every field) with every hit field cold. Only screening probes enter the dataset estimate; they are stored as `screening_keys`, so a resumed visit rebuilds the same state. Result: 8-hot-field dataset kept 81.5% (was 1%), 37-hot-field 100% (was 16%), dead 0% (was 0.5%); a dead dataset costs 315 simulations (was ~100).
+- P4: `FormulaSpec.sign`; `promote` sets it from the parent's Sharpe and `wrap_specs` passes it on.
+- P5: `SimulationResult.failed_checks`; a record that failed any in-sample check is not a line; `check_queue` sends per family the highest-Sharpe line, flipped to positive Sharpe.
+
+**Needed in the private adapter** (code not in this repository): apply `sign` when building an expression; fill `failed_checks` from the simulation result's in-sample check list (correlation checks excluded); pass `screening_keys` back on resume.
+
+**Still open**
+- Field-test dependence: cells of one field correlate 0.89–0.93 across adjacent windows (E4), so a field can look hot from one clump. Mitigation not yet coded: draw follow-ups from different operators before different windows.
+- π<sub>min</sub> = 3% and m = 10% are design choices; the break-even (1 Dataset C shape per 100 datasets; observed 1 in 40) uses n = 7 replayed datasets.
+- Not yet run on live data; first live week will be the test.
+
 ## 2026-11-07 · weekly report
 
 Window: 2026-10-31 00:00 to 2026-11-06 24:00 Pacific (last record 11-06 00:00). Prior week, same definitions: 2026-10-24 to 2026-10-30. Pass = every platform check passes; figures are distinct signals.
