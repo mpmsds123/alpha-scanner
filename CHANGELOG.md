@@ -2,6 +2,21 @@
 
 Weekly log, newest first. Each entry has six parts: **Summary** (simulations, passes, submissions), **Performance** (passes per 1,000 simulations against the prior week and a 1‰ baseline, by region and category), **Assumption checks** (README section 4 items tested by the week's data), **Logic changes** (design or code), **Risks / known issues**, **Next week**. Entries before 2026-11-07 use the earlier Ran / Found / Changed / Open format. The design document is [README.md](README.md).
 
+## 2026-11-19 · design v11
+
+**Logic changes**
+- **One score:** every possible next simulation is scored by P(new accepted alpha) and each round runs the highest. This replaces the fixed dataset queue, the e-value dataset screen and fixed stage caps.
+- **Templates:** 56 templates are grouped into 14 measured families, with one fixed member each.
+- **Datasets:** an empirical Bayes prior per region × type and an exact grid posterior; Thompson sampling with exact selection probabilities.
+- **Duplicates:** decided by daily-PnL correlation at the platform limits, not by field names.
+- **Higher orders:** 12 variants per parent; a child counts only if it beats its parent by the best-of-12 luck margin (0.70).
+- **Measurement:** 8 of every 80 simulations are uniform random, and all estimates are refitted from the logs at each run.
+- **Public code:** now the v11 decision layer (statistics, novelty, policy, loop) with 18 tests. The v7 reference implementation and its figures are removed.
+
+**Evidence:** see README sections 2, 4 and 5. Synthetic comparison: 37.7 vs 19.7 distinct accepted signals per 40,000 simulations (6 of 6 markets).
+
+**Risks / known issues:** regular pass rates rest on 13 passes; the synthetic comparison uses the model v11 assumes; no live v11 run yet.
+
 ## 2026-11-07 · weekly report
 
 Window: 2026-10-31 00:00 to 2026-11-06 24:00 Pacific (last record 11-06 00:00). Prior week, same definitions: 2026-10-24 to 2026-10-30. Pass = every platform check passes; figures are distinct signals.

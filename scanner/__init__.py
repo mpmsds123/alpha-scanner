@@ -1,14 +1,1 @@
-"""Public, platform-neutral components for the adaptive alpha scanner."""
-
-from .pipeline import AdaptiveScanner, DatasetState, ScannerConfig
-from .statistics import SPRTConfig, SPRTDecision, SequentialTest
-
-__all__ = [
-    "AdaptiveScanner",
-    "DatasetState",
-    "ScannerConfig",
-    "SPRTConfig",
-    "SPRTDecision",
-    "SequentialTest",
-]
-
+"""Adaptive alpha scanner, design v11: the decision layer, on abstract keys (no formulas, field names or endpoints)."""

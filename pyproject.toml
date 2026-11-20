@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "adaptive-alpha-scanner"
-version = "1.0.0"
-description = "A sanitized reference implementation of sequential experiment design for factor discovery."
+version = "11.0.0"
+description = "Design v11 decision layer: one score per simulation, Bayesian dataset search, daily-PnL signal clusters."
 requires-python = ">=3.10"
 
 [tool.pytest.ini_options]
